@@ -1,0 +1,15 @@
+{
+  "rateLimits": {
+    "primary": {
+      "usedPercent": 0,
+      "windowDurationMins": 300,
+      "resetsAt": null
+    },
+    "secondary": {
+      "usedPercent": 56,
+      "windowDurationMins": 10080,
+      "resetsAt": 2000000000
+    },
+    "planType": "pro"
+  }
+}

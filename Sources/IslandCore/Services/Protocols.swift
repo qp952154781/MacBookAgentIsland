@@ -1,0 +1,65 @@
+import Foundation
+
+public enum QuotaError: Error, Sendable, Equatable {
+    case notConfigured(String)
+    case unauthorized(String)
+    case transient(String)
+    case decoding(String)
+}
+public protocol QuotaProviding: Sendable {
+    var agent: AgentKind { get }
+    func fetchQuota() async throws -> QuotaSnapshot
+}
+/// Local bootstrap can populate the first frame while the authoritative query runs.
+public protocol InitialQuotaProviding: QuotaProviding {
+    func initialQuota() async -> QuotaSnapshot?
+}
+public protocol SessionProviding: Sendable {
+    var agent: AgentKind { get }
+    /// Returns cached, incrementally read sessions that are alive or recently active.
+    func diagnosticMessage() async -> String?
+    func currentSessions(now: Date) async -> [AgentSession]
+    /// nil requests discovery/reconciliation; paths request a selective refresh.
+    func currentSessions(now: Date, changedPaths: Set<String>?) async -> [AgentSession]
+    func parsedBytesLastScan() async -> Int
+    /// Debounced paths, scoped to this provider. An empty set requests reconciliation.
+    func changes() -> AsyncStream<Set<String>>
+    func setActiveWindow(_ seconds: TimeInterval) async
+}
+
+public extension SessionProviding {
+    func diagnosticMessage() async -> String? { nil }
+    func setActiveWindow(_ seconds: TimeInterval) async {}
+    func currentSessions(now: Date, changedPaths: Set<String>?) async -> [AgentSession] {
+        await currentSessions(now: now)
+    }
+    func parsedBytesLastScan() async -> Int { 0 }
+}
+
+public protocol QuotaServicing: Sendable {
+    func retryClaudeConnection() async
+    func updates() async -> AsyncStream<QuotaUpdate>
+    func start() async
+    func stop() async
+    func refreshNow(agent: AgentKind?) async
+    func setInterval(_ seconds: TimeInterval) async
+    func setSuspended(_ suspended: Bool) async
+}
+
+public extension QuotaServicing {
+    func retryClaudeConnection() async { await refreshNow(agent: .claude) }
+    func setSuspended(_ suspended: Bool) async {}
+}
+
+public protocol SessionServicing: Sendable {
+    func updates() async -> AsyncStream<SessionUpdate>
+    func start() async
+    func stop() async
+    func refreshNow() async
+    func setActiveWindow(_ seconds: TimeInterval) async
+    func setVisible(_ visible: Bool) async
+}
+
+public extension SessionServicing {
+    func setVisible(_ visible: Bool) async {}
+}

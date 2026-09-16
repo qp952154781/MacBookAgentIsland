@@ -1,0 +1,20 @@
+{
+  "five_hour": {
+    "utilization": 0
+  },
+  "unknown_bucket_a": {
+    "utilization": 99
+  },
+  "unknown_bucket_b": {
+    "utilization": 99
+  },
+  "unknown_bucket_c": {
+    "utilization": 99
+  },
+  "unknown_bucket_d": {
+    "utilization": 99
+  },
+  "seven_day_cowork": {
+    "utilization": 99
+  }
+}

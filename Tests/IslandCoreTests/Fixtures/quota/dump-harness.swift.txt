@@ -1,0 +1,24 @@
+// Offline harness compiled together with the production DumpQuota.swift.
+import Foundation
+import IslandCore
+
+struct FixtureQuotaProvider: QuotaProviding {
+    let agent: AgentKind
+    let succeed: Bool
+    func fetchQuota() async throws -> QuotaSnapshot {
+        guard succeed else { throw QuotaError.notConfigured("未连接测试账号") }
+        return QuotaSnapshot(agent: agent, plan: "Pro", windows: [
+            QuotaWindow(id: "fixture.weekly", kind: .weekly, label: "本周", usedPercent: 17,
+                        windowMinutes: 10080, resetsAt: Date(timeIntervalSince1970: 1_800_000_000))
+        ], source: .mock, fetchedAt: Date(timeIntervalSince1970: 1_789_200_000))
+    }
+}
+
+@main struct DumpQuotaHarness {
+    static func main() async {
+        let code = await DumpQuota.run(
+            claude: FixtureQuotaProvider(agent: .claude, succeed: CommandLine.arguments.contains("success")),
+            codex: FixtureQuotaProvider(agent: .codex, succeed: false))
+        exit(code)
+    }
+}

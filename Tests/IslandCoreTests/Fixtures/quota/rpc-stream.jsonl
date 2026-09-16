@@ -1,0 +1,5 @@
+{"method": "remoteControl/status/changed", "params": {}}
+{"id": 1, "result": {"userAgent": "fixture"}}
+{"method": "ignored"}
+{"id": 42, "result": {}}
+{"id": 2, "result": {"rateLimits": {"primary": {"usedPercent": 99, "windowDurationMins": 300, "resetsAt": 2000000000}, "planType": "wrong"}, "rateLimitsByLimitId": {"codex": {"primary": {"usedPercent": 39, "windowDurationMins": 10080, "resetsAt": 2000000000}, "planType": "pro"}, "codex_variant_a": {"primary": {"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 2000000000}, "secondary": {"usedPercent": 25, "windowDurationMins": 10080, "resetsAt": 2000000000}}, "codex_empty": {"primary": {"usedPercent": 0, "windowDurationMins": 300, "resetsAt": 2000000000}, "secondary": {"usedPercent": 0, "windowDurationMins": 10080, "resetsAt": 2000000000}}, "codex_named": {"limitName": "Custom", "primary": {"usedPercent": 2, "windowDurationMins": 1440, "resetsAt": 2000000000}, "secondary": {"usedPercent": 4, "windowDurationMins": 43200, "resetsAt": 2000000000}}}}}

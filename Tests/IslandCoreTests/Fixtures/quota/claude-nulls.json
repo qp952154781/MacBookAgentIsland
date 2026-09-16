@@ -1,0 +1,12 @@
+{
+  "five_hour": {
+    "utilization": null
+  },
+  "seven_day": null,
+  "seven_day_opus": "malformed",
+  "limits": [],
+  "extra_usage": {
+    "is_enabled": true,
+    "utilization": null
+  }
+}

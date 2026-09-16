@@ -1,0 +1,16 @@
+{
+  "rateLimits": {
+    "primary": {
+      "usedPercent": null,
+      "windowDurationMins": null,
+      "resetsAt": null
+    },
+    "secondary": {
+      "usedPercent": 3,
+      "windowDurationMins": null,
+      "resetsAt": null
+    },
+    "planType": null
+  },
+  "rateLimitsByLimitId": null
+}

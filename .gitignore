@@ -1,0 +1,16 @@
+# 构建产物
+.build/
+dist/
+out/
+*.o
+*.dSYM/
+
+# SwiftPM
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# 运行期数据（不应进仓库）
+*.log

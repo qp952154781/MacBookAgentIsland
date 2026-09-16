@@ -1,0 +1,4 @@
+bad json
+{"timestamp": "2026-09-11T00:00:00Z", "type": "event_msg", "payload": {"type": "token_count", "rate_limits": {"limit_id": "codex", "plan_type": "pro", "primary": {"used_percent": 39, "window_minutes": 10080, "resets_at": 2000000000}, "secondary": {"used_percent": 14, "window_minutes": 300, "resets_in_seconds": 7200}}}}
+{"timestamp": "2026-09-10T00:00:00Z", "type": "event_msg", "payload": {"type": "token_count", "rate_limits": {"primary": {"used_percent": 90, "window_minutes": 300, "resets_at": 1000}}}}
+{"type":"unknown"}
