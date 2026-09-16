@@ -59,7 +59,34 @@ AgentIsland 自己发起的 HTTP 请求仅访问 `api.anthropic.com` 的 Claude 
 
 AgentIsland 自身只读 Claude / Codex 的数据与配置，不安装 hook、不修改 statusLine。续期时由官方 CLI 自行更新其凭据，详见下文。设置保存在 AgentIsland 自己的 UserDefaults 中。解析异常只显示通用提示，不输出损坏记录原文。`--dump sessions` 会包含会话标题、项目路径和动作，请仅在本机检查，分享前自行脱敏。
 
-## 构建与安装
+## 下载安装
+
+无需安装 Swift 工具链。前往仓库的 [Releases 页面](https://github.com/qp952154781/MacBookAgentIsland/releases)，下载 `AgentIsland-<版本>-macOS-universal.zip`，适用于 macOS 14+。
+
+通用二进制同时包含 Apple Silicon（arm64）与 Intel（x86_64）。Intel 版已通过交叉编译与 Rosetta 下的运行验证，**尚未在真实 Intel Mac 上验证**，例如风扇等传感器读数可能不同；欢迎 Intel 用户反馈问题。
+
+如需校验完整性，请同时下载同一 Release 的 `.zip.sha256` 文件，将两份文件放在同一目录，在终端进入该目录后运行（将 `<版本>` 替换为下载的实际版本号）：
+
+```sh
+shasum -a 256 -c 'AgentIsland-<版本>-macOS-universal.zip.sha256'
+```
+
+解压后，**先把 `AgentIsland.app` 拖进「应用程序」文件夹，再打开**。直接在「下载」文件夹中运行时，macOS 会通过 App Translocation 把应用放到随机的只读位置运行，导致开机启动注册失效。
+
+**首次打开会被系统拦截。** 本项目没有付费的 Apple 开发者证书，应用只做了 ad-hoc 签名、未经 Apple 公证；源码完全公开，也可按下节说明自行构建。可选择以下任一种放行方式：
+
+- 图形界面：尝试打开一次 → 打开「系统设置 → 隐私与安全性」→ 在页面下方找到被阻止的 AgentIsland → 点「仍要打开」→ 验证身份后再次确认打开。
+- 终端：安装到「应用程序」后执行以下命令，再打开应用：
+
+```sh
+xattr -dr com.apple.quarantine /Applications/AgentIsland.app
+```
+
+打开后，岛会出现在屏幕顶部的刘海处；无刘海屏显示顶部胶囊。**没有 Dock 图标、没有常规窗口**，悬停在岛上即可展开，右键岛 → 设置。
+
+**升级**：右键岛 → 退出旧版，用新版替换「应用程序」中的旧版，再打开；如被系统拦截，按上述步骤放行。若开机启动失效，在设置里关闭再开启一次，因为每次构建的 ad-hoc 签名不同。
+
+## 从源码构建与安装
 
 要求 macOS 14 或以上、Swift 6 工具链；仅使用系统框架，无第三方依赖。Command Line Tools 即可，无需 Xcode。
 
@@ -85,7 +112,7 @@ scripts/bundle.sh
 
 ## 限制与已知问题
 
-- 应用使用 ad-hoc 签名，未做 Apple 公证。首次打开若被系统拦截，请在“系统设置 → 隐私与安全性”中允许打开。
+- 下载版使用 ad-hoc 签名，未做 Apple 公证，首次打开会被系统拦截；放行步骤见上文「下载安装」。
 - 锁屏或睡眠期间暂停额度轮询，解锁或唤醒后恢复，因此显示的数据可能短暂陈旧。
 - **Claude 令牌续期会启动官方 CLI**：access token 通常约 8 小时过期；普通非交互查询无法触发续期。临近或已经过期、或遇到认证失败时，App 会通过隐藏伪终端运行一次交互式 Claude Code，待输入框就绪后发送本地 `/usage` 命令，让官方 CLI 完成续期，再退出。此过程不发送对话提示、不消耗模型额度；App 不自行调用刷新接口或写入钥匙串。官方 CLI 可能联网并更新自己的凭据。
 - 续期使用 AgentIsland 的专用目录，并通过启动参数关闭 Chrome 提示和 Remote Control。遇到首次设置、目录信任或登录提示时会退出并提示你在终端完成，**不会代替你确认**。登录失效或 CLI 界面变化仍可能需要人工处理。
