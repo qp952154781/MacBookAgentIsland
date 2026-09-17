@@ -3,7 +3,7 @@ import Foundation
 import IslandCore
 
 struct FixtureQuotaProvider: QuotaProviding {
-    let agent: AgentKind
+    let agent: ProviderID
     let succeed: Bool
     func fetchQuota() async throws -> QuotaSnapshot {
         guard succeed else { throw QuotaError.notConfigured("未连接测试账号") }

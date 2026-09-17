@@ -3,8 +3,8 @@ import Foundation
 /// Display-only ordering. Providers must keep their activity-based retention order.
 public enum SessionDisplayOrder {
     /// Sort each provider independently: another provider must not affect project recency.
-    public static func columns(_ sessions: [AgentSession]) -> [[AgentSession]] {
-        [AgentKind.claude, .codex].map { agent in sorted(sessions.filter { $0.agent == agent }) }
+    public static func columns(_ sessions: [AgentSession], providers: [ProviderID] = ProviderRegistry.orderedIDs) -> [[AgentSession]] {
+        providers.map { agent in sorted(sessions.filter { $0.agent == agent }) }
     }
 
     public static func sorted(_ sessions: [AgentSession]) -> [AgentSession] {

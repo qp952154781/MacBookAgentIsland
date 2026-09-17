@@ -147,7 +147,7 @@ import IslandCore
             case "expanded-fallback": store.quotas[.claude]?.windows.removeAll { $0.kind == .session }
             case "expanded-expired": store.quotas[.claude]?.windows[0].resetsAt = now.addingTimeInterval(-7200)
             case "collapsed-full", "collapsed-full-narrow", "expanded-full":
-                for agent in AgentKind.allCases {
+                for agent in ProviderRegistry.orderedIDs {
                     if let indices = store.quotas[agent]?.windows.indices {
                         for index in indices { store.quotas[agent]?.windows[index].usedPercent = 0 }
                     }
@@ -169,7 +169,7 @@ import IslandCore
                         phase: .waitingInput, activity: "修改 3 个文件", lastActivityAt: now))
                 }
             case "collapsed-badge":
-                store.sessions += AgentKind.allCases.map { agent in
+                store.sessions += ProviderRegistry.orderedIDs.map { agent in
                     AgentSession(agent: agent, sessionId: "badge", title: "额外工作会话", phase: .thinking,
                                  lastActivityAt: now.addingTimeInterval(-10))
                 }
@@ -250,7 +250,7 @@ import IslandCore
         }
         // Render actual indicator layers at two discrete animation times, with no GUI window.
         for fallback in [false, true] {
-            for agent in AgentKind.allCases {
+            for agent in ProviderRegistry.orderedIDs {
                 for time in [0.0, 1.0] {
                     let indicator = IndicatorView(frame: CGRect(x: 0, y: 0, width: 14, height: 14))
                     indicator.configure(kind: agent == .claude ? .claude : .codex,
@@ -328,7 +328,7 @@ import IslandCore
         }
     }
     static func agentColumnFixtures(claude: Int, codex: Int) -> [AgentSession] {
-        [AgentKind.claude, .codex].flatMap { agent in
+        [ProviderID.claude, .codex].flatMap { agent in
             sessionGridFixtures(count: agent == .claude ? claude : codex).map { session in
                 var result = session
                 result.agent = agent

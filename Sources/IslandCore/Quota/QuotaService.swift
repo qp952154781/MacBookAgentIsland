@@ -1,12 +1,12 @@
 import Foundation
 
 public struct QuotaUpdate: Sendable, Equatable, Codable {
-    public let agent: AgentKind
+    public let agent: ProviderID
     public let snapshot: QuotaSnapshot?
     public let health: ProviderHealth
     public let diagnostic: String?
     public let claudeConnection: ClaudeConnectionStatus?
-    public init(agent: AgentKind, snapshot: QuotaSnapshot?, health: ProviderHealth, diagnostic: String? = nil, claudeConnection: ClaudeConnectionStatus? = nil) {
+    public init(agent: ProviderID, snapshot: QuotaSnapshot?, health: ProviderHealth, diagnostic: String? = nil, claudeConnection: ClaudeConnectionStatus? = nil) {
         self.agent = agent; self.snapshot = snapshot; self.health = health; self.diagnostic = diagnostic; self.claudeConnection = claudeConnection
     }
 }
@@ -23,35 +23,35 @@ public struct SystemQuotaClock: QuotaClock {
 }
 
 public actor QuotaService: QuotaServicing {
-    private let providers: [AgentKind: any QuotaProviding]
-    private var intervals: [AgentKind: TimeInterval]
+    private let providers: [ProviderID: any QuotaProviding]
+    private var intervals: [ProviderID: TimeInterval]
     private let diagnostics: ClaudeDiagnostics
     private let clock: any QuotaClock
     private let jitter: @Sendable () -> Double
-    private var workers: [AgentKind: Task<Void, Never>] = [:]
-    private var versions: [AgentKind: UUID] = [:]
-    private var snapshots: [AgentKind: QuotaSnapshot] = [:]
-    private var latest: [AgentKind: QuotaUpdate] = [:]
+    private var workers: [ProviderID: Task<Void, Never>] = [:]
+    private var versions: [ProviderID: UUID] = [:]
+    private var snapshots: [ProviderID: QuotaSnapshot] = [:]
+    private var latest: [ProviderID: QuotaUpdate] = [:]
     private var claudeConnection: ClaudeConnectionStatus?
-    private var failures: [AgentKind: Int] = [:]
+    private var failures: [ProviderID: Int] = [:]
     private var subscribers: [UUID: AsyncStream<QuotaUpdate>.Continuation] = [:]
-    public private(set) var refreshCounts: [AgentKind: Int] = [:]
+    public private(set) var refreshCounts: [ProviderID: Int] = [:]
     private var running = false
     private var suspended = false
     private var lifecycle = UUID()
 
     public init(providers: [any QuotaProviding] = [ClaudeQuotaProvider(), CodexQuotaProvider()],
-                intervals: [AgentKind: TimeInterval] = [.claude: 120, .codex: 120],
+                intervals: [ProviderID: TimeInterval] = [.claude: 120, .codex: 120],
                 clock: any QuotaClock = SystemQuotaClock(), diagnostics: ClaudeDiagnostics = .disabled, jitter: @escaping @Sendable () -> Double = { Double.random(in: -1...1) }) {
-        var byAgent: [AgentKind: any QuotaProviding] = [:]
+        var byAgent: [ProviderID: any QuotaProviding] = [:]
         for provider in providers { byAgent[provider.agent] = provider }
         self.diagnostics = diagnostics; self.providers = byAgent; self.intervals = intervals; self.clock = clock; self.jitter = jitter
     }
 
     public func setInterval(_ seconds: TimeInterval) async {
         let value = seconds.isFinite ? max(30, seconds) : 60
-        guard AgentKind.allCases.contains(where: { intervals[$0] != value }) else { return }
-        for agent in AgentKind.allCases { intervals[agent] = value }
+        guard ProviderRegistry.orderedIDs.contains(where: { intervals[$0] != value }) else { return }
+        for agent in ProviderRegistry.orderedIDs { intervals[agent] = value }
         if running { await refreshNow() }
     }
 
@@ -59,7 +59,7 @@ public actor QuotaService: QuotaServicing {
         let id = UUID()
         let pair = AsyncStream<QuotaUpdate>.makeStream(bufferingPolicy: .bufferingNewest(max(1, providers.count)))
         subscribers[id] = pair.continuation
-        for agent in AgentKind.allCases { if let update = latest[agent] { pair.continuation.yield(update) } }
+        for agent in ProviderRegistry.orderedIDs { if let update = latest[agent] { pair.continuation.yield(update) } }
         pair.continuation.onTermination = { [weak self] _ in Task { await self?.removeSubscriber(id) } }
         return pair.stream
     }
@@ -97,11 +97,11 @@ public actor QuotaService: QuotaServicing {
 
     /// Interrupts the selected sleep/query and waits for cancellation before starting its replacement.
     /// While stopped this performs one query; it does not start a scheduling loop.
-    public func refreshNow(agent: AgentKind? = nil) async {
+    public func refreshNow(agent: ProviderID? = nil) async {
         guard !suspended else { return }
-        let selected = agent.map { [$0] } ?? AgentKind.allCases
+        let selected = agent.map { [$0] } ?? ProviderRegistry.orderedIDs
         let epoch = lifecycle
-        var replaced: [(AgentKind, UUID, Task<Void, Never>?)] = []
+        var replaced: [(ProviderID, UUID, Task<Void, Never>?)] = []
         for key in selected where providers[key] != nil {
             let token = UUID(), task = workers[key]
             versions[key] = token
@@ -130,13 +130,13 @@ public actor QuotaService: QuotaServicing {
         subscribers.values.forEach { $0.yield(update) }
     }
 
-    private func launch(_ agent: AgentKind, repeating: Bool) {
+    private func launch(_ agent: ProviderID, repeating: Bool) {
         let version = UUID()
         versions[agent] = version
         workers[agent] = Task { [weak self] in await self?.run(agent, version: version, repeating: repeating) }
     }
 
-    private func run(_ agent: AgentKind, version: UUID, repeating: Bool) async {
+    private func run(_ agent: ProviderID, version: UUID, repeating: Bool) async {
         guard let provider = providers[agent] else { return }
         async let bootstrap: Void = loadInitialQuota(provider, agent: agent, version: version)
         while !Task.isCancelled, versions[agent] == version {
@@ -179,7 +179,7 @@ public actor QuotaService: QuotaServicing {
         if versions[agent] == version { workers[agent] = nil; versions[agent] = nil }
     }
 
-    private func loadInitialQuota(_ provider: any QuotaProviding, agent: AgentKind, version: UUID) async {
+    private func loadInitialQuota(_ provider: any QuotaProviding, agent: ProviderID, version: UUID) async {
         guard snapshots[agent] == nil, let initial = provider as? any InitialQuotaProviding,
               let snapshot = await initial.initialQuota(), !Task.isCancelled,
               versions[agent] == version, snapshots[agent] == nil else { return }
@@ -189,7 +189,7 @@ public actor QuotaService: QuotaServicing {
         subscribers.values.forEach { $0.yield(update) }
     }
 
-    private func delay(agent: AgentKind, error: QuotaError?) -> TimeInterval {
+    private func delay(agent: ProviderID, error: QuotaError?) -> TimeInterval {
         if case .notConfigured = error { return 300 }
         let configured = intervals[agent] ?? 120
         let base = configured.isFinite ? max(1, configured) : 60

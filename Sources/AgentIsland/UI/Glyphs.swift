@@ -37,7 +37,7 @@ struct CodexGlyph: View {
 struct AgentGlyph: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.brandGlyphLoader) private var injectedLoader
-    let agent: AgentKind
+    let agent: ProviderID
     var tint: Color?
     var working = false
     var animated = true
@@ -47,7 +47,7 @@ struct AgentGlyph: View {
         let color = tint ?? Theme.glyph(agent)
         Group {
             if animated {
-                LayerAnimationView(kind: agent == .claude ? .claude : .codex, color: color,
+                LayerAnimationView(kind: .provider(agent), color: color,
                                    running: working, glyph: glyph)
             } else if let glyph {
                 // ImageRenderer cannot render NSViewRepresentable. Snapshots share
@@ -57,8 +57,19 @@ struct AgentGlyph: View {
                         Image(decorative: bitmap, scale: displayScale).resizable().interpolation(.high)
                     }
                 }
-            } else if agent == .claude { ClaudeGlyph(tint: color) }
-            else { CodexGlyph(tint: color) }
+            } else {
+                switch ProviderRegistry.descriptor(for: agent).iconSource.fallback {
+                case .claude: ClaudeGlyph(tint: color)
+                case .codex: CodexGlyph(tint: color)
+                default:
+                    Canvas { context, size in
+                        let diameter = min(size.width, size.height) * 0.6
+                        let rect = CGRect(x: (size.width - diameter) / 2, y: (size.height - diameter) / 2,
+                                          width: diameter, height: diameter)
+                        context.stroke(Path(ellipseIn: rect), with: .color(color), lineWidth: 1.3)
+                    }
+                }
+            }
         }
     }
 }

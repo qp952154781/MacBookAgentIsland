@@ -3,7 +3,7 @@ import Testing
 @testable import IslandCore
 
 private actor RescanProvider: SessionProviding {
-    nonisolated let agent: AgentKind
+    nonisolated let agent: ProviderID
     nonisolated let signals = AsyncStream<Set<String>>.makeStream()
     var starts: [ContinuousClock.Instant] = []
     var requests: [Set<String>?] = []
@@ -13,7 +13,7 @@ private actor RescanProvider: SessionProviding {
     let entered = AsyncStream<Void>.makeStream()
     let release = AsyncStream<Void>.makeStream()
     var paused = false
-    init(_ agent: AgentKind, scheduler: ManualSessionScheduler) { self.agent = agent; self.scheduler = scheduler }
+    init(_ agent: ProviderID, scheduler: ManualSessionScheduler) { self.agent = agent; self.scheduler = scheduler }
     nonisolated func changes() -> AsyncStream<Set<String>> { signals.stream }
     func diagnosticMessage() async -> String? { warning }
     func currentSessions(now: Date) async -> [AgentSession] { await currentSessions(now: now, changedPaths: nil) }

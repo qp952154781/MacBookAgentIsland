@@ -10,9 +10,9 @@ struct ExpandedView: View {
     var animationsVisible = true
     var refresh: () -> Void = {}
     var settings: () -> Void = {}
-    var retry: (AgentKind) -> Void = { _ in }
+    var retry: (ProviderID) -> Void = { _ in }
     var openClaudeSetup: () -> Void = {}
-    var copyLogin: (AgentKind) -> Void = { _ in }
+    var copyLogin: (ProviderID) -> Void = { _ in }
 
     static func cardHeight(store: IslandStore) -> CGFloat {
         let count = store.quotas.values.map { $0.windows.count }.max() ?? 0
@@ -47,7 +47,7 @@ struct ExpandedView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: columns == 2 ? SessionListLayout.columnSpacing : 12) {
-                ForEach(AgentKind.allCases, id: \.self) { agent in
+                ForEach(ProviderRegistry.orderedIDs, id: \.self) { agent in
                     QuotaCard(agent: agent, snapshot: store.quotas[agent], health: store.health[agent], now: now, connection: agent == .claude ? store.claudeConnection : nil, openSetup: openClaudeSetup, diagnostic: store.quotaDiagnostics[agent],
                               height: Self.cardHeight(store: store), warning: store.warningThreshold, critical: store.criticalThreshold,
                               displayMode: store.quotaDisplayMode,
@@ -74,7 +74,7 @@ struct ExpandedView: View {
             HStack(spacing: 7) {
                 Text(store.lastRefresh.map { "更新于 " + DisplayTime.clock($0) } ?? "加载中…")
                     .font(Theme.font(9)).foregroundStyle(Theme.tertiary)
-                ForEach(AgentKind.allCases, id: \.self) { agent in
+                ForEach(ProviderRegistry.orderedIDs, id: \.self) { agent in
                     Circle().fill(healthColor(agent)).frame(width: 5, height: 5).help(healthHelp(agent))
                 }
                 Spacer()
@@ -94,9 +94,9 @@ struct ExpandedView: View {
         ZStack(alignment: .trailing) {
             if columns == 2 {
                 HStack(spacing: SessionListLayout.columnSpacing) {
-                    ForEach(Array(zip([AgentKind.claude, .codex], sessionColumns)), id: \.0) { agent, sessions in
+                    ForEach(Array(zip(ProviderRegistry.orderedIDs, sessionColumns)), id: \.0) { agent, sessions in
                         HStack(spacing: 5) {
-                            Text(agent.displayName).foregroundStyle(Theme.secondary)
+                            Text(ProviderRegistry.descriptor(for: agent).displayName).foregroundStyle(Theme.secondary)
                             Text("· \(sessions.filter { $0.phase != .ended }.count)").foregroundStyle(Theme.tertiary)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -145,7 +145,7 @@ struct ExpandedView: View {
             let lastBottom = visibleRows.last.map { bottoms[$0] } ?? 0
             VStack(spacing: 0) {
                 if sessions.isEmpty {
-                    Text("暂无 \(index == 0 ? "Claude" : "Codex") 会话")
+                    Text(Self.emptySessionLabel(column: index))
                         .font(Theme.font(11)).foregroundStyle(Theme.tertiary)
                         .frame(maxWidth: .infinity, alignment: .leading).frame(height: SessionListLayout.rowHeight)
                 } else {
@@ -167,15 +167,20 @@ struct ExpandedView: View {
             }
         }.frame(maxWidth: .infinity).frame(height: max(44, heights.reduce(0, +)))
     }
-    private func healthColor(_ agent: AgentKind) -> Color {
+    static func emptySessionLabel(column: Int, providers: [ProviderID] = ProviderRegistry.orderedIDs) -> String {
+        guard let agent = ProviderLayout.provider(at: column, in: providers) else { return "暂无活跃会话" }
+        return "暂无 \(ProviderRegistry.descriptor(for: agent).displayName) 会话"
+    }
+
+    private func healthColor(_ agent: ProviderID) -> Color {
         switch store.health[agent] {
         case .ok: .green
         case .failed: Theme.critical
         default: Theme.tertiary
         }
     }
-    private func healthHelp(_ agent: AgentKind) -> String {
+    private func healthHelp(_ agent: ProviderID) -> String {
         let snapshot = store.quotas[agent]
-        return "\(agent.displayName) · \(snapshot?.source.label ?? "等待数据")\n最近成功：\(snapshot.map { DisplayTime.full($0.fetchedAt) } ?? "暂无")"
+        return "\(ProviderRegistry.descriptor(for: agent).displayName) · \(snapshot?.source.label ?? "等待数据")\n最近成功：\(snapshot.map { DisplayTime.full($0.fetchedAt) } ?? "暂无")"
     }
 }

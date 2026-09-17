@@ -4,13 +4,13 @@ import Foundation
     public var systemMetrics = SystemMetrics()
     public var systemMetricOptions = SystemMetricOptions()
     public var claudeConnection: ClaudeConnectionStatus?
-    public var quotas: [AgentKind: QuotaSnapshot] = [:]
-    public private(set) var quotaDiagnostics: [AgentKind: String] = [:]
-    public var health: [AgentKind: ProviderHealth] = [:]
+    public var quotas: [ProviderID: QuotaSnapshot] = [:]
+    public private(set) var quotaDiagnostics: [ProviderID: String] = [:]
+    public var health: [ProviderID: ProviderHealth] = [:]
     public private(set) var firstQuotaMs: Double?
     public private(set) var firstSessionMs: Double?
     public var sessionsLoaded = false
-    public private(set) var sessionWarnings: [AgentKind: String] = [:]
+    public private(set) var sessionWarnings: [ProviderID: String] = [:]
     @ObservationIgnored private let processStarted: ContinuousClock.Instant
     public var sessions: [AgentSession] = [] {
         didSet {
@@ -36,7 +36,7 @@ import Foundation
     @ObservationIgnored private let clock: @Sendable () -> Date
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var epoch = UUID()
-    @ObservationIgnored private var awaitingQuota: Set<AgentKind> = []
+    @ObservationIgnored private var awaitingQuota: Set<ProviderID> = []
     @ObservationIgnored private var lastTokenRefresh: Date?
     @ObservationIgnored private var visible = true
 
@@ -91,9 +91,9 @@ import Foundation
         _ = await (quotaStop, sessionStop)
     }
 
-    public func refreshNow(agent: AgentKind? = nil) async {
+    public func refreshNow(agent: ProviderID? = nil) async {
         guard isRunning else { return }
-        awaitingQuota.formUnion(agent.map { [$0] } ?? AgentKind.allCases)
+        awaitingQuota.formUnion(agent.map { [$0] } ?? ProviderRegistry.orderedIDs)
         isRefreshing = true
         async let quotaRefresh: Void? = quotaService?.refreshNow(agent: agent)
         async let sessionRefresh: Void? = sessionService?.refreshNow()
@@ -147,10 +147,10 @@ import Foundation
         return Double(value.seconds) * 1000 + Double(value.attoseconds) / 1e15
     }
 
-    public func workingSessions(for agent: AgentKind) -> [AgentSession] {
+    public func workingSessions(for agent: ProviderID) -> [AgentSession] {
         sessions.filter { $0.agent == agent && $0.phase.isWorking }.sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
-    public func headline(for agent: AgentKind) -> QuotaWindow? {
+    public func headline(for agent: ProviderID) -> QuotaWindow? {
         switch health[agent] {
         case .needsSetup, .failed, .disabled: nil
         default: quotas[agent].flatMap { quotaDisplayMode.headline($0) }

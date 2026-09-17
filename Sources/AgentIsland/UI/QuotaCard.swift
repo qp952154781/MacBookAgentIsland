@@ -2,7 +2,7 @@ import SwiftUI
 import IslandCore
 
 struct QuotaCard: View {
-    let agent: AgentKind
+    let agent: ProviderID
     let snapshot: QuotaSnapshot?
     let health: ProviderHealth?
     let now: Date
@@ -20,7 +20,7 @@ struct QuotaCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 AgentGlyph(agent: agent, animated: false).frame(width: 16, height: 16)
-                Text(agent.displayName).font(Theme.font(12, weight: .semibold))
+                Text(ProviderRegistry.descriptor(for: agent).displayName).font(Theme.font(12, weight: .semibold))
                 if let plan = snapshot?.plan {
                     Text(plan.capitalized).font(Theme.font(9, weight: .medium)).foregroundStyle(Theme.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 2).background(.white.opacity(0.07), in: Capsule())
@@ -62,7 +62,7 @@ struct QuotaCard: View {
                 case let .needsSetup(message):
                     VStack(alignment: .leading, spacing: 5) {
                         Text(agent == .claude ? ClaudeOAuthUsageClient.recoveringMessage : "未连接 · " + message).lineLimit(2)
-                        Text(agent == .claude ? "岛会自动重试连接" : "请先登录 Codex 后刷新").foregroundStyle(Theme.tertiary)
+                        Text(agent == .claude ? "岛会自动重试连接" : "请先登录 \(ProviderRegistry.descriptor(for: agent).displayName) 后刷新").foregroundStyle(Theme.tertiary)
                         if agent != .claude {
                             Button("复制登录命令", action: copyLogin).islandInteraction(.control("login:" + agent.rawValue))
                         } else {

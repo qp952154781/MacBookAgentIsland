@@ -10,9 +10,9 @@ struct IslandRootView: View {
     var animationsVisible = true
     var refresh: () -> Void = {}
     var settings: () -> Void = {}
-    var retry: (AgentKind) -> Void = { _ in }
+    var retry: (ProviderID) -> Void = { _ in }
     var openClaudeSetup: () -> Void = {}
-    var copyLogin: (AgentKind) -> Void = { _ in }
+    var copyLogin: (ProviderID) -> Void = { _ in }
     private var config: IslandLayoutConfig { ExpandedView.layoutConfig(store: store, notch: notch) }
 
     var body: some View {

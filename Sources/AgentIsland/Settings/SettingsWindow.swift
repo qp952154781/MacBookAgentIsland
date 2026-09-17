@@ -39,9 +39,17 @@ import IslandCore
         if let url = await claude { claudeLoginCommand = Self.quote(url.path) + " auth login" }
         if let url = await codex { codexLoginCommand = Self.quote(url.path) + " login" }
     }
-    func copy(_ agent: AgentKind) {
+    func copy(_ agent: ProviderID) {
+        guard let command = loginCommand(for: agent) else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(agent == .claude ? claudeLoginCommand : codexLoginCommand, forType: .string)
+        NSPasteboard.general.setString(command, forType: .string)
+    }
+    func loginCommand(for agent: ProviderID) -> String? {
+        switch agent {
+        case .claude: claudeLoginCommand
+        case .codex: codexLoginCommand
+        default: nil
+        }
     }
     func openClaudeSetup() {
         Task {

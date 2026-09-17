@@ -21,7 +21,7 @@ func eventually(_ predicate: () async -> Bool) async throws {
     #expect(await predicate())
 }
 
-func quotaSample(_ agent: AgentKind = .claude, at date: Date = Date(timeIntervalSince1970: 1_800_000_000)) -> QuotaSnapshot {
+func quotaSample(_ agent: ProviderID = .claude, at date: Date = Date(timeIntervalSince1970: 1_800_000_000)) -> QuotaSnapshot {
     QuotaSnapshot(agent: agent, plan: "Pro", windows: [.init(id: "weekly", kind: .weekly, label: "本周", usedPercent: 17)],
                   source: agent == .claude ? .claudeOAuth : .codexAppServer, fetchedAt: date)
 }
@@ -120,10 +120,10 @@ final class FakeQuotaClock: QuotaClock, @unchecked Sendable {
 }
 
 actor SequenceQuotaProvider: QuotaProviding, CodexRolloutReading {
-    nonisolated let agent: AgentKind
+    nonisolated let agent: ProviderID
     private var results: [Result<QuotaSnapshot, QuotaError>]
     private(set) var count = 0
-    init(agent: AgentKind = .claude, _ results: [Result<QuotaSnapshot, QuotaError>]) { self.agent = agent; self.results = results }
+    init(agent: ProviderID = .claude, _ results: [Result<QuotaSnapshot, QuotaError>]) { self.agent = agent; self.results = results }
     func fetchQuota() async throws -> QuotaSnapshot {
         count += 1
         guard !results.isEmpty else { throw QuotaError.transient("fixture exhausted") }

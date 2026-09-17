@@ -7,7 +7,7 @@ import Testing
 private struct ReplaySessionProvider: SessionProviding {
     let base: any SessionProviding
     let signals = AsyncStream<Set<String>>.makeStream()
-    var agent: AgentKind { base.agent }
+    var agent: ProviderID { base.agent }
     func changes() -> AsyncStream<Set<String>> { signals.stream }
     func currentSessions(now: Date) async -> [AgentSession] { await base.currentSessions(now: now) }
     func currentSessions(now: Date, changedPaths: Set<String>?) async -> [AgentSession] {

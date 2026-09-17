@@ -7,7 +7,7 @@ public enum QuotaError: Error, Sendable, Equatable {
     case decoding(String)
 }
 public protocol QuotaProviding: Sendable {
-    var agent: AgentKind { get }
+    var agent: ProviderID { get }
     func fetchQuota() async throws -> QuotaSnapshot
 }
 /// Local bootstrap can populate the first frame while the authoritative query runs.
@@ -15,7 +15,7 @@ public protocol InitialQuotaProviding: QuotaProviding {
     func initialQuota() async -> QuotaSnapshot?
 }
 public protocol SessionProviding: Sendable {
-    var agent: AgentKind { get }
+    var agent: ProviderID { get }
     /// Returns cached, incrementally read sessions that are alive or recently active.
     func diagnosticMessage() async -> String?
     func currentSessions(now: Date) async -> [AgentSession]
@@ -41,7 +41,7 @@ public protocol QuotaServicing: Sendable {
     func updates() async -> AsyncStream<QuotaUpdate>
     func start() async
     func stop() async
-    func refreshNow(agent: AgentKind?) async
+    func refreshNow(agent: ProviderID?) async
     func setInterval(_ seconds: TimeInterval) async
     func setSuspended(_ suspended: Bool) async
 }

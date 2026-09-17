@@ -139,7 +139,7 @@ import Testing
 }
 
 private actor CancellableQuotaProvider: QuotaProviding {
-    nonisolated let agent: AgentKind = .claude
+    nonisolated let agent: ProviderID = .claude
     private(set) var calls = 0
     private(set) var cancellations = 0
     func fetchQuota() async throws -> QuotaSnapshot {
@@ -206,7 +206,7 @@ private actor CancellableQuotaProvider: QuotaProviding {
 }
 
 private actor BootstrapQuotaProvider: InitialQuotaProviding {
-    nonisolated let agent: AgentKind = .codex
+    nonisolated let agent: ProviderID = .codex
     var cancelled = false
     func initialQuota() async -> QuotaSnapshot? { quotaSample(.codex) }
     func fetchQuota() async throws -> QuotaSnapshot {

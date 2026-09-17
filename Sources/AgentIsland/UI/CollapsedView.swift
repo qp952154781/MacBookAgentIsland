@@ -10,22 +10,28 @@ struct CollapsedView: View {
     private var config: IslandLayoutConfig { store.layoutConfig }
 
     var body: some View {
+        let providers = ProviderLayout.wings()
         HStack(alignment: .top, spacing: 0) {
-            wing(.claude)
+            wing(providers.left, isLeading: true)
             Color.clear.frame(width: notch.notchRect.width)
-            wing(.codex)
+            wing(providers.right, isLeading: false)
         }
         .frame(height: notch.notchRect.height, alignment: .top)
     }
 
-    private func wing(_ agent: AgentKind) -> some View {
+    @ViewBuilder private func wing(_ agent: ProviderID?, isLeading: Bool) -> some View {
+        if let agent { wingContent(agent, isLeading: isLeading) }
+        else { Color.clear.frame(width: config.wingWidth, height: notch.notchRect.height) }
+    }
+
+    private func wingContent(_ agent: ProviderID, isLeading: Bool) -> some View {
         let quota = store.headline(for: agent)
         let working = store.workingSessions(for: agent)
         let wings = IslandLayout.wingRects(notch: notch, config: config)
-        let contentWidth = (agent == .claude ? wings.left : wings.right).width
+        let contentWidth = (isLeading ? wings.left : wings.right).width
         return ZStack(alignment: .bottom) {
             HStack(spacing: config.wingWidth < 68 ? 3 : 5) {
-                if agent == .codex { percentage(quota, agent: agent, working: working) }
+                if !isLeading { percentage(quota, agent: agent, working: working) }
                 AgentGlyph(agent: agent, tint: quota == nil ? Theme.secondary : nil, working: !working.isEmpty, animated: animated && animationsVisible)
                     .frame(width: config.wingWidth < 68 ? 13 : 14, height: config.wingWidth < 68 ? 13 : 14)
                     .overlay(alignment: .topTrailing) {
@@ -35,12 +41,12 @@ struct CollapsedView: View {
                         }
                     }
                     .offset(y: active ? -2 : 0)
-                if agent == .claude { percentage(quota, agent: agent, working: working) }
+                if isLeading { percentage(quota, agent: agent, working: working) }
             }
             .frame(width: contentWidth, height: notch.notchRect.height)
         }.frame(width: config.wingWidth)
     }
-    private func percentage(_ quota: QuotaWindow?, agent: AgentKind, working: [AgentSession]) -> some View {
+    private func percentage(_ quota: QuotaWindow?, agent: ProviderID, working: [AgentSession]) -> some View {
         let label = store.health[agent] == nil && quota == nil ? "···" : store.quotaDisplayMode.percent(quota)
         return Text(label)
             .font(Theme.font(config.wingWidth < 68 ? 10 : 12, weight: .semibold)).monospacedDigit()

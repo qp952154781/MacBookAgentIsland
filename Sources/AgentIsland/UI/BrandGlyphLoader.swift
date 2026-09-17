@@ -8,7 +8,7 @@ import IslandCore
 @MainActor @Observable final class BrandGlyphLoader {
     static let shared = BrandGlyphLoader()
     private let files: BrandGlyphFiles
-    private var glyphs: [AgentKind: Glyph] = [:]
+    private var glyphs: [ProviderID: Glyph] = [:]
 
     /// A decoded source owns a small, bounded cache shared by static and animated views.
     @MainActor final class Glyph {
@@ -76,7 +76,7 @@ import IslandCore
         files = BrandGlyphFiles(applicationDirectories: applicationDirectories)
     }
 
-    func glyph(for agent: AgentKind) -> Glyph? { glyphs[agent] }
+    func glyph(for agent: ProviderID) -> Glyph? { glyphs[agent] }
 
     /// Revalidate on presentation/lifecycle events, never on an animation tick.
     func refresh() async {
@@ -84,7 +84,7 @@ import IslandCore
         let decodes = await files.bitmapDecodes
         UIRenderMetrics.glyphBitmapDecodes += decodes - bitmapDecodes
         bitmapDecodes = decodes
-        for agent in AgentKind.allCases {
+        for agent in ProviderRegistry.orderedIDs {
             guard let asset = loaded[agent] else {
                 if glyphs[agent] != nil { glyphs[agent] = nil }
                 continue
@@ -117,14 +117,12 @@ actor BrandGlyphFiles {
 
     init(applicationDirectories: [URL]) { self.applicationDirectories = applicationDirectories }
 
-    func load() -> [AgentKind: Asset] {
-        var result: [AgentKind: Asset] = [:]
+    func load() -> [ProviderID: Asset] {
+        var result: [ProviderID: Asset] = [:]
         var visited = Set<String>()
-        for agent in AgentKind.allCases {
-            let app = agent == .claude ? "Claude.app" : "ChatGPT.app"
-            let names = agent == .claude
-                ? ["TrayIconTemplate@2x.png", "TrayIconTemplate-Dark@2x.png"]
-                : ["chatgptTemplate@2x.png", "icon-codex-dark-color.png"]
+        for descriptor in ProviderRegistry.ordered {
+            let agent = descriptor.id
+            guard case let .installedApplication(app, names, _) = descriptor.iconSource else { continue }
             // Prefer a template in either installation location over a secondary asset.
             search: for name in names {
                 for directory in applicationDirectories {

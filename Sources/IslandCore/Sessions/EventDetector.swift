@@ -33,7 +33,7 @@ public func detectQuotaEvents(old: QuotaSnapshot?, new: QuotaSnapshot, warning: 
               window.usedPercent > before.usedPercent else { return [] }
         return [warning, critical].compactMap { threshold in
             guard before.usedPercent < threshold, window.usedPercent >= threshold else { return nil }
-            return IslandEvent(agent: new.agent, title: "\(new.agent.displayName) \(window.label)额度已用 \(Int(threshold))%",
+            return IslandEvent(agent: new.agent, title: "\(ProviderRegistry.descriptor(for: new.agent).displayName) \(window.label)额度已用 \(Int(threshold))%",
                                kind: .quotaThreshold(windowID: window.id, percent: threshold), date: new.fetchedAt)
         }
     }
@@ -41,7 +41,7 @@ public func detectQuotaEvents(old: QuotaSnapshot?, new: QuotaSnapshot, warning: 
 
 public struct EventDeduper: Sendable {
     private struct Key: Hashable, Sendable {
-        var agent: AgentKind
+        var agent: ProviderID
         var session: String?
         var kind: String
     }

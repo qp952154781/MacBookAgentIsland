@@ -54,8 +54,9 @@ struct DumpSessions: Encodable, Sendable {
 
     static func displayPayload(_ input: [AgentSession], columns: Int) -> Sessions {
         guard columns == 2 else { return .merged(displaySessions(input)) }
-        let groups = SessionDisplayOrder.columns(input).map { redactPrompts($0) }
-        return .columns(claude: groups[0], codex: groups[1])
+        let groups = Dictionary(uniqueKeysWithValues: zip(ProviderRegistry.orderedIDs,
+            SessionDisplayOrder.columns(input).map { redactPrompts($0) }))
+        return .columns(claude: groups[.claude] ?? [], codex: groups[.codex] ?? [])
     }
 
     static func displaySessions(_ input: [AgentSession]) -> [AgentSession] {

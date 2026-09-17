@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import IslandCore
 
-private func eventSession(_ phase: SessionPhase, id: String = "one", agent: AgentKind = .claude) -> AgentSession {
+private func eventSession(_ phase: SessionPhase, id: String = "one", agent: ProviderID = .claude) -> AgentSession {
     AgentSession(agent: agent, sessionId: id, title: "会话", cwd: "/fixture/project", phase: phase,
                  turnStartedAt: sessionTestNow.addingTimeInterval(-20), lastActivityAt: sessionTestNow)
 }
@@ -48,7 +48,7 @@ private func eventSession(_ phase: SessionPhase, id: String = "one", agent: Agen
 }
 
 private actor FixtureSessionProvider: SessionProviding {
-    nonisolated let agent: AgentKind = .claude
+    nonisolated let agent: ProviderID = .claude
     nonisolated let signals = AsyncStream<Set<String>>.makeStream()
     var phase: SessionPhase = .thinking
     var refreshCount = 0
@@ -105,7 +105,7 @@ private actor FixtureSessionProvider: SessionProviding {
 }
 
 private actor CancellableSessionProvider: SessionProviding {
-    nonisolated let agent: AgentKind = .claude
+    nonisolated let agent: ProviderID = .claude
     nonisolated let entered = AsyncStream<Void>.makeStream()
     nonisolated let terminated = AsyncStream<Void>.makeStream()
     var cancelled = false
@@ -144,7 +144,7 @@ private actor CancellableSessionProvider: SessionProviding {
 }
 
 private actor TokenSessionProvider: SessionProviding {
-    nonisolated let agent: AgentKind = .codex
+    nonisolated let agent: ProviderID = .codex
     var revision: String?
     var visible = true
     nonisolated func changes() -> AsyncStream<Set<String>> { AsyncStream { _ in } }

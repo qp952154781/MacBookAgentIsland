@@ -145,7 +145,7 @@ public actor CodexRolloutQuotaReader: CodexRolloutReading {
 }
 
 public struct CodexQuotaProvider: InitialQuotaProviding {
-    public let agent: AgentKind = .codex
+    public let agent: ProviderID = .codex
     private let appServer: @Sendable () async throws -> QuotaSnapshot
     private let rollout: any CodexRolloutReading
     public init(client: CodexAppServerClient = CodexAppServerClient(), rollout: any CodexRolloutReading = CodexRolloutQuotaReader()) {

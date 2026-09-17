@@ -6,7 +6,7 @@ private actor StoreQuotaService: QuotaServicing {
     var continuation: AsyncStream<QuotaUpdate>.Continuation?
     var starts = 0
     var stops = 0
-    var refreshes: [AgentKind?] = []
+    var refreshes: [ProviderID?] = []
     var interval: TimeInterval = 0
     func updates() -> AsyncStream<QuotaUpdate> {
         let pair = AsyncStream<QuotaUpdate>.makeStream()
@@ -15,7 +15,7 @@ private actor StoreQuotaService: QuotaServicing {
     }
     func start() { starts += 1 }
     func stop() { stops += 1; continuation?.finish(); continuation = nil }
-    func refreshNow(agent: AgentKind?) { refreshes.append(agent) }
+    func refreshNow(agent: ProviderID?) { refreshes.append(agent) }
     func setInterval(_ seconds: TimeInterval) { interval = seconds }
     func emit(_ update: QuotaUpdate) { continuation?.yield(update) }
 }

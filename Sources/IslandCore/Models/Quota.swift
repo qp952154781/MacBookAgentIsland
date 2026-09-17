@@ -35,13 +35,13 @@ public struct QuotaWindow: Codable, Sendable, Equatable, Identifiable {
 }
 
 public struct QuotaSnapshot: Codable, Sendable, Equatable {
-    public var agent: AgentKind
+    public var agent: ProviderID
     public var plan: String?
     public var windows: [QuotaWindow]
     public var source: QuotaSource
     public var fetchedAt: Date
 
-    public init(agent: AgentKind, plan: String? = nil, windows: [QuotaWindow], source: QuotaSource, fetchedAt: Date) {
+    public init(agent: ProviderID, plan: String? = nil, windows: [QuotaWindow], source: QuotaSource, fetchedAt: Date) {
         self.agent = agent
         self.plan = plan
         self.windows = windows

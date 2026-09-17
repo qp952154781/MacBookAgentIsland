@@ -331,7 +331,7 @@ public protocol ClaudeConnectionProviding: QuotaProviding {
     func retryConnection() async
 }
 public struct ClaudeQuotaProvider: ClaudeConnectionProviding {
-    public let agent: AgentKind = .claude
+    public let agent: ProviderID = .claude
     private let client: ClaudeOAuthUsageClient
     public init(client: ClaudeOAuthUsageClient = .live()) { self.client = client }
     public func fetchQuota() async throws -> QuotaSnapshot { try await client.fetchQuota() }

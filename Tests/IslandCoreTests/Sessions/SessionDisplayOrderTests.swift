@@ -49,7 +49,7 @@ private func displaySession(_ id: String, phase: SessionPhase = .thinking,
 
 @Test(arguments: [(2, 10), (10, 2), (0, 5), (5, 0), (0, 0), (1, 1)])
 func displayColumnsKeepProvidersSeparate(counts: (Int, Int)) {
-    let input = [AgentKind.claude, .codex].flatMap { agent in
+    let input = [ProviderID.claude, .codex].flatMap { agent in
         (0..<(agent == .claude ? counts.0 : counts.1)).map { index in
             AgentSession(agent: agent, sessionId: "\(index)", title: "样例", projectName: index.isMultiple(of: 2) ? "A" : nil,
                          phase: index.isMultiple(of: 3) ? .runningTool : .waitingInput,
@@ -59,7 +59,7 @@ func displayColumnsKeepProvidersSeparate(counts: (Int, Int)) {
     let columns = SessionDisplayOrder.columns(input.reversed())
     #expect(columns.count == 2)
     #expect(columns[0].count == counts.0 && columns[1].count == counts.1)
-    for (index, agent) in [AgentKind.claude, .codex].enumerated() {
+    for (index, agent) in [ProviderID.claude, .codex].enumerated() {
         #expect(columns[index].allSatisfy { $0.agent == agent })
         #expect(columns[index] == SessionDisplayOrder.sorted(input.filter { $0.agent == agent }))
     }

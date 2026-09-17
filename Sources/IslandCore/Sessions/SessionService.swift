@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SessionUpdate: Sendable, Equatable {
-    public var warnings: [AgentKind: String] = [:]
+    public var warnings: [ProviderID: String] = [:]
     public var sessions: [AgentSession]
     public var events: [IslandEvent]
     public var codexTokenCountChanged: Bool
@@ -29,7 +29,7 @@ public actor SessionService: SessionServicing {
         }
     }
     private struct Result: Sendable {
-        var agent: AgentKind
+        var agent: ProviderID
         var sessions: [AgentSession]
         var warning: String?
         var bytes: Int
@@ -43,15 +43,15 @@ public actor SessionService: SessionServicing {
     private var refreshTask: Task<Void, Never>?
     private var delayTask: Task<Void, Never>?
     private var delayDeadline: ContinuousClock.Instant?
-    private var pending: [AgentKind: Pending] = [:]
-    private var lastScans: [AgentKind: ContinuousClock.Instant] = [:]
+    private var pending: [ProviderID: Pending] = [:]
+    private var lastScans: [ProviderID: ContinuousClock.Instant] = [:]
     private var hiddenSince: ContinuousClock.Instant?
-    private var cached: [AgentKind: [AgentSession]] = [:]
-    private var warnings: [AgentKind: String] = [:]
+    private var cached: [ProviderID: [AgentSession]] = [:]
+    private var warnings: [ProviderID: String] = [:]
     private var continuations: [UUID: AsyncStream<SessionUpdate>.Continuation] = [:]
     private var sessions: [AgentSession] = []
     private var deduper = EventDeduper()
-    public private(set) var refreshCounts: [AgentKind: Int] = [:]
+    public private(set) var refreshCounts: [ProviderID: Int] = [:]
     public private(set) var metrics = SessionRescanMetrics()
     private var running = false
     private var generation = 0
@@ -123,7 +123,7 @@ public actor SessionService: SessionServicing {
         await refreshNow()
     }
 
-    func changed(agent: AgentKind, paths: Set<String>) {
+    func changed(agent: ProviderID, paths: Set<String>) {
         guard running else { return }
         enqueue(agent: agent, paths: paths.isEmpty ? nil : paths)
     }
@@ -155,14 +155,14 @@ public actor SessionService: SessionServicing {
         await refreshTask?.value
     }
 
-    private func deadline(for agent: AgentKind) -> ContinuousClock.Instant {
+    private func deadline(for agent: ProviderID) -> ContinuousClock.Instant {
         if let hiddenSince {
             return max(hiddenSince, lastScans[agent] ?? hiddenSince).advanced(by: .seconds(30))
         }
         return lastScans[agent]?.advanced(by: .milliseconds(500)) ?? origin
     }
 
-    private func enqueue(agent: AgentKind, paths: Set<String>?) {
+    private func enqueue(agent: ProviderID, paths: Set<String>?) {
         if pending[agent] != nil || deadline(for: agent) > scheduler.now() {
             metrics.sessionRescansSkipped += 1
         }

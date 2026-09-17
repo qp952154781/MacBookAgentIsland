@@ -9,10 +9,10 @@ import IslandCore
     init(options: LaunchOptions) {
         if let scenario = options.mockScenario {
             let fixture = IslandStore.mock(scenario)
-            quota = QuotaService(providers: AgentKind.allCases.map { agent in
+            quota = QuotaService(providers: ProviderRegistry.orderedIDs.map { agent in
                 FixtureQuotaProvider(agent: agent, snapshot: fixture.quotas[agent])
             }, intervals: [.claude: 60, .codex: 60])
-            sessions = SessionService(providers: AgentKind.allCases.map { agent in
+            sessions = SessionService(providers: ProviderRegistry.orderedIDs.map { agent in
                 FixtureSessionProvider(agent: agent, values: fixture.sessions.filter { $0.agent == agent })
             })
             store = options.measure ? IslandStore(quotaService: quota, sessionService: sessions, processStarted: options.processStarted) : fixture
@@ -25,7 +25,7 @@ import IslandCore
 }
 
 private struct FixtureQuotaProvider: QuotaProviding {
-    let agent: AgentKind
+    let agent: ProviderID
     let snapshot: QuotaSnapshot?
     func fetchQuota() async throws -> QuotaSnapshot {
         guard var snapshot else { throw QuotaError.notConfigured("请在终端登录") }
@@ -34,7 +34,7 @@ private struct FixtureQuotaProvider: QuotaProviding {
     }
 }
 private struct FixtureSessionProvider: SessionProviding {
-    let agent: AgentKind
+    let agent: ProviderID
     let values: [AgentSession]
     func currentSessions(now: Date) async -> [AgentSession] { values }
     func changes() -> AsyncStream<Set<String>> { AsyncStream { _ in } }

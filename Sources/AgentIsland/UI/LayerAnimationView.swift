@@ -1,11 +1,23 @@
 import AppKit
 import SwiftUI
 import QuartzCore
+import IslandCore
 
 /// Only these tiny layers animate. Discrete keyframes cap visible changes at 10 Hz;
 /// Core Animation runs them without a SwiftUI state update or a process-side timer.
 struct LayerAnimationView: NSViewRepresentable {
-    enum Kind: Equatable { case activity(Double?), claude, codex, refresh }
+    /// These are rendering styles, not provider identities.
+    enum Kind: Equatable {
+        case activity(Double?), claude, codex, generic, refresh
+
+        static func provider(_ id: ProviderID) -> Kind {
+            switch ProviderRegistry.descriptor(for: id).iconSource.fallback {
+            case .claude: .claude
+            case .codex: .codex
+            default: .generic
+            }
+        }
+    }
     let kind: Kind
     let color: Color
     let running: Bool
@@ -81,7 +93,7 @@ struct LayerAnimationView: NSViewRepresentable {
             shape.contentsScale = window?.backingScaleFactor ?? 2
         }
         mark.contents = nil
-        if let glyph, kind == .claude || kind == .codex {
+        if let glyph, kind == .claude || kind == .codex || kind == .generic {
             mark.contents = glyph.raster(size: bounds.size, scale: window?.backingScaleFactor ?? 2, tint: tint)
             mark.contentsGravity = .resize
             animate("transform.rotation.z", duration: 8) { $0 * 2 * .pi }
@@ -133,6 +145,10 @@ struct LayerAnimationView: NSViewRepresentable {
             mark.lineWidth = max(1, size * 0.075) * 0.82
             track.path = nil
             animate("transform.rotation.z", duration: 8) { $0 * 2 * .pi }
+        case .generic:
+            mark.path = CGPath(ellipseIn: CGRect(x: width / 2 - size * 0.3, y: height / 2 - size * 0.3,
+                                               width: size * 0.6, height: size * 0.6), transform: nil)
+            mark.lineWidth = 1.3
         case .refresh:
             let path = CGMutablePath()
             path.addArc(center: CGPoint(x: width / 2, y: height / 2), radius: size * 0.23,

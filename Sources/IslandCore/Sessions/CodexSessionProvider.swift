@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 public actor CodexSessionProvider: SessionProviding {
-    public nonisolated let agent: AgentKind = .codex
+    public nonisolated let agent: ProviderID = .codex
     private let paths: SessionPaths
     private let clock: @Sendable () -> Date
     private var warning: String?

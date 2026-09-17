@@ -51,7 +51,7 @@ public struct ContextUsage: Codable, Sendable, Equatable {
 
 public struct AgentSession: Codable, Sendable, Equatable, Identifiable {
     public var id: String
-    public var agent: AgentKind
+    public var agent: ProviderID
     public var sessionId: String
     public var title: String
     public var cwd: String?
@@ -71,7 +71,7 @@ public struct AgentSession: Codable, Sendable, Equatable, Identifiable {
     /// Changes only when a new Codex token_count line is consumed.
     public var tokenCountRevision: String?
 
-    public init(agent: AgentKind, sessionId: String, title: String, cwd: String? = nil,
+    public init(agent: ProviderID, sessionId: String, title: String, cwd: String? = nil,
                 projectName: String? = nil, origin: String? = nil, model: String? = nil,
                 phase: SessionPhase = .idle, activity: String? = nil, lastPrompt: String? = nil,
                 plan: PlanProgress? = nil, context: ContextUsage? = nil, turnStartedAt: Date? = nil,

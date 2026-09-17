@@ -1,7 +1,7 @@
 import Foundation
 
 public actor ClaudeSessionProvider: SessionProviding {
-    public nonisolated let agent: AgentKind = .claude
+    public nonisolated let agent: ProviderID = .claude
     private let paths: SessionPaths
     private let refreshDirectory: URL
     private let refreshProject: String

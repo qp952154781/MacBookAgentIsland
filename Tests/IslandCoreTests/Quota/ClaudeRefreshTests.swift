@@ -241,7 +241,7 @@ func refreshCredential(expiry: Double) -> Data {
 }
 
 private actor RefreshStatusProvider: ClaudeConnectionProviding {
-    nonisolated let agent: AgentKind = .claude
+    nonisolated let agent: ProviderID = .claude
     private var calls = 0
     func retryConnection() {}
     func fetchQuota() async throws -> QuotaSnapshot { try await fetchQuota(onStatus: { _ in }) }

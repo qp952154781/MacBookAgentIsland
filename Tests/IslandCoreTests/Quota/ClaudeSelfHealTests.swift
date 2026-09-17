@@ -343,7 +343,7 @@ private actor HangingExpiry: ClaudeExpiryReading {
     await service.stop(); await reader.value
 }
 private actor RecoveryDeadlineProvider: ClaudeConnectionProviding {
-    nonisolated let agent = AgentKind.claude
+    nonisolated let agent = ProviderID.claude
     let clock: FakeQuotaClock
     private(set) var calls = 0
     init(clock: FakeQuotaClock) { self.clock = clock }

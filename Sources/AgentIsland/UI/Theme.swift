@@ -5,15 +5,18 @@ enum Theme {
     static let primary = Color.white.opacity(0.92)
     static let secondary = Color.white.opacity(0.55)
     static let tertiary = Color.white.opacity(0.35)
-    static let claude = Color(red: 0.851, green: 0.467, blue: 0.341)
-    static let codex = Color(red: 0.541, green: 0.706, blue: 1)
-    static let codexGlyph = Color(red: 232.0 / 255, green: 234.0 / 255, blue: 240.0 / 255)
+    static let claude = brand(.claude)
+    static let codex = brand(.codex)
+    static let codexGlyph = glyph(.codex)
     static let warning = Color(red: 1, green: 0.710, blue: 0.278)
     static let critical = Color(red: 1, green: 0.373, blue: 0.341)
     static let card = Color.white.opacity(0.06)
-    static func brand(_ agent: AgentKind) -> Color { agent == .claude ? claude : codex }
-    static func glyph(_ agent: AgentKind) -> Color { agent == .claude ? claude : codexGlyph }
-    static func quota(_ window: QuotaWindow?, agent: AgentKind, warningThreshold: Double = 70, criticalThreshold: Double = 90) -> Color {
+    private static func color(_ rgb: ProviderDescriptor.RGB) -> Color {
+        Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+    static func brand(_ agent: ProviderID) -> Color { color(ProviderRegistry.descriptor(for: agent).brandColor) }
+    static func glyph(_ agent: ProviderID) -> Color { color(ProviderRegistry.descriptor(for: agent).glyphColor) }
+    static func quota(_ window: QuotaWindow?, agent: ProviderID, warningThreshold: Double = 70, criticalThreshold: Double = 90) -> Color {
         guard let window else { return secondary }
         return window.usedPercent >= criticalThreshold ? critical : window.usedPercent >= warningThreshold ? warning : brand(agent)
     }

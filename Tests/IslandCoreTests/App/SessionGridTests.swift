@@ -123,7 +123,7 @@ import IslandCore
         #expect(groups.map { $0.map(\.id) } == store.sessionColumns(count: count).map { $0.map(\.id) })
         #expect(groups.flatMap { $0 }.allSatisfy { ($0.lastPrompt?.count ?? 0) <= 80 })
     }
-    for agent in AgentKind.allCases {
+    for agent in ProviderRegistry.orderedIDs {
         let input = store.sessions.filter { $0.agent == agent }
         let data = try JSONEncoder().encode(DumpSessions.displayPayload(input, columns: 2))
         let decoded = try JSONDecoder().decode([String: [AgentSession]].self, from: data)
