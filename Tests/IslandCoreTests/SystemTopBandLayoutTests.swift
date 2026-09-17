@@ -176,7 +176,38 @@ private func bandPlan(_ capacity: SystemTopBandCapacity, options: SystemMetricOp
     for invalid: Double? in [nil, -.infinity, .infinity, .nan, -1] {
         for compact in [true, false] { #expect(SystemTopBandFormat.rate(invalid, compact: compact) == "—") }
     }
-    #expect(SystemTopBandFormat.rate(.greatestFiniteMagnitude, compact: true) == "2e308B")
+    #expect(SystemTopBandFormat.rate(.greatestFiniteMagnitude, compact: true) == "—")
+    #expect(SystemTopBandFormat.rate(.greatestFiniteMagnitude, compact: false) == "—")
+}
+
+@Test func topBandRatesStayWithinThreeSignificantCharactersAndRollOver() {
+    let k = 1024.0
+    #expect(SystemTopBandFormat.rate(9.94 * k, compact: true) == "9.9K")
+    #expect(SystemTopBandFormat.rate(9.96 * k, compact: true) == "10K")
+    #expect(SystemTopBandFormat.rate(999.4 * k, compact: true) == "999K")
+    #expect(SystemTopBandFormat.rate(999.5 * k, compact: true) == "1.0M")
+    #expect(SystemTopBandFormat.rate(999.94 * k, compact: false) == "999.9 KB/s")
+    #expect(SystemTopBandFormat.rate(999.95 * k, compact: false) == "1.0 MB/s")
+    #expect(SystemTopBandFormat.rate(999.4 * pow(k, 4), compact: true) == "999T")
+    #expect(SystemTopBandFormat.rate(999.5 * pow(k, 4), compact: true) == "—")
+    #expect(SystemTopBandFormat.rate(999.95 * pow(k, 4), compact: false) == "—")
+    // Every finite, in-range value renders with at most three significant characters plus a unit.
+    var bytes = k
+    while bytes < pow(k, 5) {
+        let text = SystemTopBandFormat.rate(bytes, compact: true)
+        if text != "—" { #expect(text.count <= 4, "\(bytes) → \(text)") }
+        bytes *= 1.37
+    }
+}
+
+@Test func topBandFanTextIsBoundedToRealisticRPM() {
+    #expect(SystemTopBandFormat.fan(0) == "静止")
+    #expect(SystemTopBandFormat.fan(2507.4) == "2507")
+    #expect(SystemTopBandFormat.fan(99_999) == "99999")
+    #expect(SystemTopBandFormat.fan(100_000) == "—")
+    for invalid: Double? in [nil, -1, .nan, .infinity, Double(UInt32.max)] {
+        #expect(SystemTopBandFormat.fan(invalid) == "—")
+    }
 }
 
 @Test func topBandPanelCoordinatesAlignWithBothCardEdgesInEveryForm() throws {

@@ -81,7 +81,7 @@ extension UserDefaults: AppSettingsDefaults {}
         let warning = min(98, max(1, number("warningThreshold", 70)))
         warningThreshold = warning
         criticalThreshold = min(100, max(warning + 1, number("criticalThreshold", 90)))
-        wingWidth = min(100, max(60, number("wingWidth", 76)))
+        wingWidth = min(100, max(IslandLayout.minimumWingWidth, number("wingWidth", 76)))
         useMainScreen = flag("useMainScreen", false)
         showInFullscreen = flag("showInFullscreen", false)
         launchAtLogin = flag("launchAtLogin", false)

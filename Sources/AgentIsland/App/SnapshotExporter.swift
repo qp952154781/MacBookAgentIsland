@@ -33,6 +33,8 @@ import IslandCore
             ("no-notch-active-loading", .busy, .active, false),
             ("no-notch-active-unavailable", .busy, .active, false),
             ("collapsed-active-narrow", .busy, .active, true),
+            ("collapsed-compact", .idle, .collapsed, true), ("collapsed-compact-active", .busy, .active, true),
+            ("collapsed-compact-single", .idle, .collapsed, true),
             ("collapsed-left-active", .busy, .active, true), ("collapsed-right-active", .busy, .active, true),
             ("expanded-recovering", .idle, .expanded, true), ("expanded-recovering-empty", .idle, .expanded, true), ("expanded-refreshing", .idle, .expanded, true), ("expanded-setup", .idle, .expanded, true), ("expanded-login", .idle, .expanded, true),
             ("expanded-system-cpu-warning", .idle, .expanded, true),
@@ -198,6 +200,16 @@ import IslandCore
                                  lastActivityAt: now.addingTimeInterval(-10))
                 }
             case "collapsed-narrow", "collapsed-active-narrow": store.wingWidth = 60
+            case "collapsed-compact", "collapsed-compact-active", "collapsed-compact-single":
+                // Narrowest supported wings, with the widest percentage ("100%") on both sides.
+                store.wingWidth = IslandLayout.minimumWingWidth
+                for agent in ProviderRegistry.orderedIDs {
+                    if let indices = store.quotas[agent]?.windows.indices {
+                        for index in indices { store.quotas[agent]?.windows[index].usedPercent = 0 }
+                    }
+                }
+                // A single provider carries period labels, so its wings stay at the labeled minimum.
+                if name == "collapsed-compact-single" { store.providerOverrides = [.codex: false] }
             default: break
             }
             var notch = metrics(hasNotch: hasNotch)

@@ -17,7 +17,11 @@ import Testing
             let plan = status.layoutPlan
             print("Top band \(hasNotch ? "notch" : "capsule") \(panelWidth) pt: level \(plan.level.rawValue), \(plan.placements)")
             #expect(!plan.hidden.contains { !$0.isNetwork })
-            if hasNotch && panelWidth == 600 { #expect(plan.level == .downloadOnly) }
+            if hasNotch && panelWidth == 600 {
+                // Realistic worst-case rate and fan widths leave room for both directions and all hardware.
+                #expect(plan.level == .compactNetwork)
+                #expect(plan.hidden.isEmpty)
+            }
             if !hasNotch || panelWidth == 900 { #expect(plan.level == .full) }
             let regions = SystemTopBandLayout.regions(panelWidth: panelWidth,
                 notchWidth: hasNotch ? notch.notchRect.width : nil, notchSafetyInset: config.notchSafetyInset)
@@ -75,7 +79,7 @@ import Testing
         for item in SystemTopBandItem.allCases {
             let values: [String]
             if item.isNetwork { values = rates.map { SystemTopBandFormat.rate($0, compact: level.compactRates) } }
-            else if item == .fan { values = ["静止", "0", "9", "2507", "65535", String(UInt32.max)] }
+            else if item == .fan { values = [0, 9, 2507, 65535, 99_999, 100_000, Double(UInt32.max), .nan].map(SystemTopBandFormat.fan) }
             else { values = ["—", "0%", "9%", "10%", "99%", "100%"] }
             for value in values {
                 let actual = NSHostingView(rootView: SystemStatusItemView(item: item, value: value, level: level)).fittingSize.width

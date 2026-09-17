@@ -157,3 +157,36 @@ private actor StoreSessionService: SessionServicing {
     await store.stop()
     #expect(store.firstQuotaMs == first)
 }
+
+@MainActor private final class WingSettingsDefaults: AppSettingsDefaults {
+    var values: [String: Any]
+    init(_ values: [String: Any]) { self.values = values }
+    func string(forKey name: String) -> String? { values[name] as? String }
+    func object(forKey name: String) -> Any? { values[name] }
+    func set(_ value: Any?, forKey name: String) { values[name] = value }
+}
+
+@MainActor @Test func wingWidthPreferenceClampsToCompactMinimum() {
+    #expect(AppSettings(defaults: WingSettingsDefaults(["wingWidth": 40.0])).wingWidth == 50)
+    #expect(AppSettings(defaults: WingSettingsDefaults(["wingWidth": 55.0])).wingWidth == 55)
+    #expect(AppSettings(defaults: WingSettingsDefaults(["wingWidth": 60.0])).wingWidth == 60)
+    #expect(AppSettings(defaults: WingSettingsDefaults(["wingWidth": 120.0])).wingWidth == 100)
+}
+
+@MainActor @Test func onlyPairedQuotaWingsUseTheCompactMinimum() {
+    let store = IslandStore.mock(.idle)
+    store.wingWidth = IslandLayout.minimumWingWidth
+    // Claude and Codex side by side: glyph + percentage fits the compact width.
+    #expect(store.effectiveWingWidth == IslandLayout.minimumWingWidth)
+    #expect(store.layoutConfig.wingWidth == IslandLayout.minimumWingWidth)
+    // A single provider shows period labels ("100% 7d"): keep the labeled minimum.
+    store.providerOverrides = [.codex: false]
+    #expect(store.effectiveWingWidth == IslandLayout.labeledWingMinimum)
+    // System monitor ("CPU" / "内存" labels): also the labeled minimum.
+    store.providerOverrides = [.claude: false, .codex: false]
+    #expect(store.effectiveWingWidth == IslandLayout.labeledWingMinimum)
+    // Wider preferences are always honored.
+    store.wingWidth = 80
+    #expect(store.effectiveWingWidth == 80)
+}
+

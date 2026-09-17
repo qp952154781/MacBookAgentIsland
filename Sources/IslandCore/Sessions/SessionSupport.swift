@@ -80,8 +80,15 @@ func nonempty(_ text: String?) -> String? {
     guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
     return text
 }
+/// Collapses whitespace and bounds the result to `limit` characters (grapheme clusters).
+/// A truncated result ends with "…" so a cut command or title never reads as complete.
 func cleanSessionText(_ text: String, limit: Int) -> String {
-    String(text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").prefix(limit))
+    let joined = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    guard joined.count > limit else { return joined }
+    guard limit > 1 else { return limit == 1 ? "…" : "" }
+    let kept = joined.prefix(limit - 1)
+    let trimmed = kept.trimmingCharacters(in: .whitespaces)
+    return (trimmed.isEmpty ? String(kept) : trimmed) + "…"
 }
 func firstPromptLine(_ text: String, limit: Int = 80) -> String {
     let first = text.split(whereSeparator: { $0.isNewline }).first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""

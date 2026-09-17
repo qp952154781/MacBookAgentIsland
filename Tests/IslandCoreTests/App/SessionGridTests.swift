@@ -17,9 +17,12 @@ import IslandCore
 @MainActor @Test func gridPanelHeightUsesActualRows() {
     let store = IslandStore.mock(.idle)
     let notch = SnapshotExporter.metrics(hasNotch: true)
-    store.sessions = SnapshotExporter.sessionGridFixtures(count: 4)
+    store.sessions = []
     #expect(store.layoutConfig(notch: notch).expandedWidth == 600)
-    #expect(ExpandedView.contentHeight(store: store, notch: notch) == 400)
+    // Four sessions split two per agent: two grid rows, one row (44 pt) shorter than five sessions.
+    store.sessions = SnapshotExporter.sessionGridFixtures(count: 4)
+    #expect(store.layoutConfig(notch: notch).expandedWidth == 900)
+    #expect(ExpandedView.contentHeight(store: store, notch: notch) == 338)
     store.sessions = SnapshotExporter.sessionGridFixtures(count: 5)
     #expect(store.layoutConfig(notch: notch).expandedWidth == 900)
     #expect(ExpandedView.contentHeight(store: store, notch: notch) == 382)
@@ -37,10 +40,10 @@ import IslandCore
     defer { model.stop(); panel.close() }
     let tracker = HoverTracker(panel: panel, model: model, notch: notch)
     let outerCell = CGPoint(x: notch.notchRect.midX + 400, y: notch.screenFrame.maxY - 220)
-    store.sessions = SnapshotExporter.sessionGridFixtures(count: 4)
+    store.sessions = []
     tracker.refreshGeometry()
     #expect(!tracker.contains(outerCell))
-    store.sessions = SnapshotExporter.sessionGridFixtures(count: 5)
+    store.sessions = SnapshotExporter.sessionGridFixtures(count: 1)
     tracker.refreshGeometry()
     #expect(tracker.contains(outerCell))
     store.sessionListLayout = .singleColumn

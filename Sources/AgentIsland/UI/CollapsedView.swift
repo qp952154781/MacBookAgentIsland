@@ -8,6 +8,13 @@ struct CollapsedView: View {
     var animated = true
     var animationsVisible = true
     private var config: IslandLayoutConfig { store.layoutConfig }
+    // Sizing tiers for the paired quota wings. The compact tier exists only below
+    // `IslandLayout.compactWingThreshold`, so wider wings render exactly as before.
+    private var compact: Bool { config.wingWidth < IslandLayout.compactWingThreshold }
+    private var narrow: Bool { config.wingWidth < 68 }
+    private var pairGlyphSize: CGFloat { compact ? 11 : narrow ? 13 : 14 }
+    private var pairSpacing: CGFloat { compact ? 2 : narrow ? 3 : 5 }
+    private var pairFontSize: CGFloat { compact ? 9 : narrow ? 10 : 12 }
 
     var body: some View {
         let providers = (left: store.providerWings.left.agent, right: store.providerWings.right.agent)
@@ -79,8 +86,7 @@ struct CollapsedView: View {
         if let agent {
             if let window = store.headline(for: agent), let value = window.valueText {
                 valueTextWing(value, window: window, agent: agent, leading: isLeading,
-                              fontSize: config.wingWidth < 68 ? 10 : 12,
-                              iconSize: config.wingWidth < 68 ? 13 : 14, spacing: config.wingWidth < 68 ? 3 : 5)
+                              fontSize: pairFontSize, iconSize: pairGlyphSize, spacing: pairSpacing)
             } else { wingContent(agent, isLeading: isLeading) }
         }
         else { Color.clear.frame(width: config.wingWidth, height: notch.notchRect.height) }
@@ -105,10 +111,10 @@ struct CollapsedView: View {
         let wings = IslandLayout.wingRects(notch: notch, config: config)
         let contentWidth = (isLeading ? wings.left : wings.right).width
         return ZStack(alignment: .bottom) {
-            HStack(spacing: config.wingWidth < 68 ? 3 : 5) {
+            HStack(spacing: pairSpacing) {
                 if !isLeading { percentage(quota, agent: agent, working: working) }
                 AgentGlyph(agent: agent, tint: quota == nil ? Theme.secondary : nil, descriptor: store.descriptor(for: agent), working: !working.isEmpty, animated: animated && animationsVisible)
-                    .frame(width: config.wingWidth < 68 ? 13 : 14, height: config.wingWidth < 68 ? 13 : 14)
+                    .frame(width: pairGlyphSize, height: pairGlyphSize)
                     .overlay(alignment: .topTrailing) {
                         if working.count > 1 {
                             Text("\(working.count)").font(Theme.font(7, weight: .bold))
@@ -124,9 +130,10 @@ struct CollapsedView: View {
     private func percentage(_ quota: QuotaWindow?, agent: ProviderID, working: [AgentSession]) -> some View {
         let label = store.health[agent] == nil && quota == nil ? "···" : store.quotaDisplayMode.percent(quota)
         return Text(label)
-            .font(Theme.font(config.wingWidth < 68 ? 10 : 12, weight: .semibold)).monospacedDigit()
+            .font(Theme.font(pairFontSize, weight: .semibold)).monospacedDigit()
             .foregroundStyle(Theme.quota(quota, agent: agent, warningThreshold: store.warningThreshold, criticalThreshold: store.criticalThreshold, descriptor: store.descriptor(for: agent)))
-            .modifier(WingValueSizing(agent: agent, maximumWidth: max(12, config.wingWidth - 26)))
+            // Glyph + spacing + notch and outer margins: 13+3+6+4 normally, 11+2+6+3 compact.
+            .modifier(WingValueSizing(agent: agent, maximumWidth: max(12, config.wingWidth - (compact ? 22 : 26))))
             .offset(y: active ? -2 : 0)
             .frame(height: notch.notchRect.height)
             .overlay {

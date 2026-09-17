@@ -50,7 +50,7 @@ private func builtIn() -> NotchMetrics {
     #expect(!NSIntersectsRect(wings.left, wings.right))
 }
 
-@Test(arguments: [CGFloat(60), 76, 100])
+@Test(arguments: [CGFloat(50), 60, 76, 100])
 func activeStaysWithinTopBand(wingWidth: CGFloat) {
     let external = NotchMetrics(screenFrame: NSMakeRect(-1920, 200, 1920, 1080),
                                 safeAreaTop: 0, menuBarHeight: 24)
@@ -65,3 +65,27 @@ func activeStaysWithinTopBand(wingWidth: CGFloat) {
         #expect(active.maxY == notch.screenFrame.maxY)
     }
 }
+
+@Test func compactWingsReclaimOnlyTheOuterMargin() {
+    let notch = builtIn()
+    var config = IslandLayoutConfig()
+    // Compact wings: 3 pt outer margin, the notch side keeps its 6 pt safety inset.
+    config.wingWidth = IslandLayout.minimumWingWidth
+    var wings = IslandLayout.wingRects(notch: notch, config: config)
+    #expect(IslandLayout.minimumWingWidth == 50)
+    #expect(NSEqualRects(wings.left, NSMakeRect(665 - 50 + 3, 950, 41, 32)))
+    #expect(NSEqualRects(wings.right, NSMakeRect(850 + 6, 950, 41, 32)))
+    // At and above the threshold the geometry is exactly what it was before compact wings existed.
+    for width: CGFloat in [IslandLayout.compactWingThreshold, 60, 76] {
+        config.wingWidth = width
+        wings = IslandLayout.wingRects(notch: notch, config: config)
+        #expect(NSEqualRects(wings.left, NSMakeRect(665 - width + 6, 950, width - 12, 32)))
+        #expect(NSEqualRects(wings.right, NSMakeRect(856, 950, width - 12, 32)))
+    }
+    // Displays without a notch have no insets at any width.
+    let external = NotchMetrics(screenFrame: NSMakeRect(-1920, 200, 1920, 1080), safeAreaTop: 0, menuBarHeight: 24)
+    config.wingWidth = IslandLayout.minimumWingWidth
+    wings = IslandLayout.wingRects(notch: external, config: config)
+    #expect(NSWidth(wings.left) == IslandLayout.minimumWingWidth && NSWidth(wings.right) == IslandLayout.minimumWingWidth)
+}
+

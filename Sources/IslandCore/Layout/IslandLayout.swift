@@ -17,6 +17,15 @@ public struct IslandLayoutConfig: Sendable, Equatable {
 public enum IslandLayout {
     /// Shared outer alignment for quota cards and the expanded system metrics band.
     public static let expandedContentInset: CGFloat = 16
+    /// Collapsed wings narrower than this use compact typography and a tighter outer margin.
+    public static let compactWingThreshold: CGFloat = 56
+    /// The previous lower bound; wings whose content carries labels (single provider,
+    /// system monitor, session counts) never go below it so nothing is clipped.
+    public static let labeledWingMinimum: CGFloat = 60
+    /// Narrowest wing that still shows a brand glyph next to "100%" in compact typography.
+    public static let minimumWingWidth: CGFloat = 50
+    /// Outer margin of compact wings. The notch side always keeps `notchSafetyInset`.
+    public static let compactOuterInset: CGFloat = 3
 
     /// Keep the notch anchor even when a side Dock makes the visible frame asymmetric.
     public static func maximumCenteredWidth(notch: NotchMetrics) -> CGFloat {
@@ -52,9 +61,11 @@ public enum IslandLayout {
     /// Screen coordinates, anchored next to the notch in every mode for visual continuity.
     public static func wingRects(notch: NotchMetrics, config: IslandLayoutConfig = .init()) -> (left: CGRect, right: CGRect) {
         let rect = notch.notchRect
-        let inset = notch.hasNotch ? config.notchSafetyInset : 0
-        let width = max(0, config.wingWidth - 2 * inset)
-        return (NSMakeRect(NSMinX(rect) - config.wingWidth + inset, NSMinY(rect), width, NSHeight(rect)),
-                NSMakeRect(NSMaxX(rect) + inset, NSMinY(rect), width, NSHeight(rect)))
+        let inner = notch.hasNotch ? config.notchSafetyInset : 0
+        // Compact wings reclaim part of the outer margin; the notch side stays at the safety inset.
+        let outer = config.wingWidth < compactWingThreshold ? min(inner, compactOuterInset) : inner
+        let width = max(0, config.wingWidth - inner - outer)
+        return (NSMakeRect(NSMinX(rect) - config.wingWidth + outer, NSMinY(rect), width, NSHeight(rect)),
+                NSMakeRect(NSMaxX(rect) + inner, NSMinY(rect), width, NSHeight(rect)))
     }
 }

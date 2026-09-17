@@ -71,6 +71,27 @@ import Testing
     #expect(ClaudeTranscript.action(name: "Agent", input: ["description": String(repeating: "文", count: 100)]).count == 60)
 }
 
+@Test func truncatedSessionTextEndsWithEllipsisWithinLimit() {
+    // The reported case: a long command cut mid-word used to render as "…/run3/progre" with no marker.
+    let command = "python3 -B docs/audit/D30-evidence/run3/progress_report.py --verbose"
+    let cut = cleanSessionText(command, limit: 40)
+    #expect(cut.count == 40)
+    #expect(cut.hasSuffix("…"))
+    #expect(cut == String(command.prefix(39)) + "…")
+    // Untruncated text is returned unchanged, with whitespace collapsed and no marker.
+    #expect(cleanSessionText("  swift   build \n --release ", limit: 40) == "swift build --release")
+    #expect(cleanSessionText(String(repeating: "a", count: 40), limit: 40) == String(repeating: "a", count: 40))
+    // Whitespace is not left dangling before the ellipsis.
+    #expect(cleanSessionText("abcdefgh ijklmnop", limit: 10) == "abcdefgh…")
+    // Grapheme clusters stay whole.
+    let emoji = String(repeating: "👩‍💻", count: 12)
+    #expect(cleanSessionText(emoji, limit: 5) == String(repeating: "👩‍💻", count: 4) + "…")
+    #expect(cleanSessionText("中文标题很长很长很长", limit: 6) == "中文标题很…")
+    // Degenerate limits never crash.
+    #expect(cleanSessionText("abc", limit: 1) == "…")
+    #expect(cleanSessionText("abc", limit: 0) == "")
+}
+
 @Test func claudeDiscoveryArchiveMetadataRefreshAndKeyExclusion() async throws {
     let fixture = try SessionFixture(); defer { fixture.remove() }
     try fixture.write("{\"pid\":123,\"sessionId\":\"live\",\"cwd\":\"/fixture/project\",\"entrypoint\":\"claude-desktop\",\"startedAt\":1789200000000,\"version\":\"fixture\"}", ".claude/sessions/123.json")

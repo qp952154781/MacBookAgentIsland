@@ -22,7 +22,9 @@ public struct SessionListLayout: Equatable, Sendable {
     public init(mode: SessionListLayoutMode, activeCount: Int, notch: NotchMetrics,
                 singleColumnWidth: CGFloat = 600) {
         let limit = IslandLayout.maximumCenteredWidth(notch: notch)
-        let wantsTwo = mode == .twoColumns || (mode == .automatic && activeCount >= 5)
+        // Automatic keeps Claude and Codex apart whenever there is anything to show;
+        // with no active sessions a single empty-state line reads better than two placeholders.
+        let wantsTwo = mode == .twoColumns || (mode == .automatic && activeCount >= 1)
         columns = wantsTwo && limit >= 880 ? 2 : 1
         width = min(columns == 2 ? 900 : singleColumnWidth, limit)
     }

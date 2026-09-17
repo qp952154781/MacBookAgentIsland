@@ -154,7 +154,7 @@ struct SettingsView: View {
                         option(method.label, selected: settings.expansionMethod == method) { settings.expansionMethod = method }
                     }
                 }
-                number("翅膀宽度", value: $settings.wingWidth, range: 60...100, suffix: "pt")
+                number("翅膀宽度", value: $settings.wingWidth, range: Double(IslandLayout.minimumWingWidth)...100, suffix: "pt")
                 HStack {
                     Text("显示屏幕")
                     Spacer()

@@ -37,7 +37,7 @@ struct SystemStatusView: View {
         case .cpu: metrics.cpu?.text ?? "—"
         case .gpu: metrics.gpu?.text ?? "—"
         case .memory: metrics.memory.map { "\(Int($0.percent.rounded()))%" } ?? "—"
-        case .fan: metrics.fan?.fans.first.map { $0.rpm == 0 ? "静止" : "\(Int($0.rpm.rounded()))" } ?? "—"
+        case .fan: SystemTopBandFormat.fan(metrics.fan?.fans.first?.rpm)
         }
     }
 

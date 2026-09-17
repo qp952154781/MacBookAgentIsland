@@ -10,10 +10,14 @@ private func gridMetrics(width: CGFloat = 1512, visibleWidth: CGFloat? = nil) ->
 
 @Test func sessionColumnsAndWidthFollowCountPreferenceAndScreen() {
     let notch = gridMetrics()
-    let four = SessionListLayout(mode: .automatic, activeCount: 4, notch: notch)
-    let five = SessionListLayout(mode: .automatic, activeCount: 5, notch: notch)
-    #expect(four.columns == 1 && four.width == 600)
-    #expect(five.columns == 2 && five.width == 900)
+    // Automatic separates Claude and Codex as soon as there is one active session;
+    // with none, a single empty-state row is shown instead of two placeholders.
+    let none = SessionListLayout(mode: .automatic, activeCount: 0, notch: notch)
+    #expect(none.columns == 1 && none.width == 600)
+    for count in [1, 2, 4, 5, 12] {
+        let layout = SessionListLayout(mode: .automatic, activeCount: count, notch: notch)
+        #expect(layout.columns == 2 && layout.width == 900)
+    }
     #expect(SessionListLayout(mode: .singleColumn, activeCount: 12, notch: notch).columns == 1)
     for count in [0, 1, 2] {
         #expect(SessionListLayout(mode: .twoColumns, activeCount: count, notch: notch).columns == 2)
@@ -89,8 +93,9 @@ private func gridMetrics(width: CGFloat = 1512, visibleWidth: CGFloat? = nil) ->
 
 @MainActor @Test func automaticCountsNonEndedSessionsAndSettingsApplyImmediately() {
     let store = IslandStore()
-    store.sessions = (0..<5).map { AgentSession(agent: .codex, sessionId: "\($0)", title: "样例", phase: .idle, lastActivityAt: .distantPast) }
+    store.sessions = [AgentSession(agent: .codex, sessionId: "0", title: "样例", phase: .idle, lastActivityAt: .distantPast)]
     #expect(store.sessionLayout(notch: gridMetrics()).columns == 2)
+    // An ended session is not active: with nothing left to show, the empty state is a single row.
     store.sessions[0].phase = .ended
     #expect(store.sessionLayout(notch: gridMetrics()).columns == 1)
     let settings = AppSettings()

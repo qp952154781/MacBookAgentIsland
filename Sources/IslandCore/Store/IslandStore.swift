@@ -254,7 +254,17 @@ import Foundation
         }
     }
     public var layoutConfig: IslandLayoutConfig {
-        var config = IslandLayoutConfig(); config.wingWidth = wingWidth; return config
+        var config = IslandLayoutConfig(); config.wingWidth = effectiveWingWidth; return config
+    }
+    /// The user's wing width, widened when the collapsed content needs more room.
+    /// Only a pair of provider quota wings (glyph + percentage) may use the compact minimum;
+    /// labeled wings — single provider with period labels, system monitor, session counts —
+    /// keep the previous lower bound so their text is never clipped.
+    public var effectiveWingWidth: CGFloat {
+        let wings = providerWings
+        let quotaPair = visibleProviderIDs.count >= 2
+            && [wings.left.agent, wings.right.agent].allSatisfy { $0.map(quotaProviderIDs.contains) ?? false }
+        return quotaPair ? wingWidth : max(wingWidth, IslandLayout.labeledWingMinimum)
     }
     public func sessionLayout(notch: NotchMetrics) -> SessionListLayout {
         SessionListLayout(mode: sessionProviderIDs.count == 2 ? sessionListLayout : .singleColumn, activeCount: displaySessions.filter { $0.phase != .ended }.count,
