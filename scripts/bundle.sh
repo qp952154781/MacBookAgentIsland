@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 # Keep release metadata here; release.sh reads the version through --version.
-APP_VERSION="0.1.0"
-BUILD_NUMBER="1"
+APP_VERSION="0.2.0"
+BUILD_NUMBER="2"
 BINARY=""
 usage() {
     cat <<'HELP'

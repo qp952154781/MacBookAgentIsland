@@ -9,7 +9,7 @@ See remaining quota at a glance. Working sessions get rotating icons and activit
 All screenshots use built-in mock data, including plans, usage, sessions and system metrics.
 Dates use a fixed example timestamp displayed in UTC. EXIF/XMP and other ancillary metadata have been removed.
 
-**Collapsed** — Claude on the left, Codex on the right.
+**Collapsed** — with both sources enabled, Claude on the left and Codex on the right.
 
 ![Collapsed](docs/images/collapsed.png)
 
@@ -17,9 +17,18 @@ Dates use a fixed example timestamp displayed in UTC. EXIF/XMP and other ancilla
 
 ![Active](docs/images/active.png)
 
-**Expanded** — system metrics, two quota cards, and sessions grouped by agent in two columns: Claude on the left, Codex on the right.
+**Expanded** — network, CPU, GPU, memory and fan metrics beside the notch, above two quota cards. Eight fictional sessions automatically form agent columns: Claude on the left, Codex on the right, with running, thinking and waiting-for-input states.
 
 ![Expanded](docs/images/expanded.png)
+
+## Features
+
+- View remaining quota and reset times, working-session indicators, current actions and context usage. Hover or click to expand; completed sessions never open the panel automatically.
+- Expanded system metrics include network, CPU, memory, and GPU usage and fan speed where available. The top band uses the full available wings beside a notch, aligned with the cards; without a notch, metrics are evenly distributed across one row. Narrow layouts simplify automatically.
+- Enable sources independently. Automatic detection shows Claude Code / Codex by default once used, based on their data directories; settings also allow manual overrides.
+- With one source enabled, both collapsed wings prioritize its different quota periods; when fewer than two windows are available, the other wing shows CPU. With neither provider nor custom sources, use system monitor mode: CPU and memory in the collapsed wings.
+- Claude Code with a third-party backend such as GLM or Kimi shows sessions only, without official quota or login prompts, when Claude credentials are absent and the last observed model name does not start with `claude-`.
+- Connect other tools' quotas or balances through [custom data sources](#custom-data-sources).
 
 Sessions are sorted by status: running tools first, then thinking (including compacting and retrying), followed by waiting for permission, waiting for input, error, idle, and ended. Within each priority tier, sessions from the same project stay together, with project groups ordered by their latest activity and unnamed projects last. Sessions within each group use newest activity first. Each agent is sorted independently in two-column mode; single-column mode sorts the merged list.
 
@@ -29,26 +38,38 @@ Settings → Session list → Layout (设置 → 会话列表 → 布局) defaul
 
 - macOS 14 or later, Apple Silicon or Intel.
 - Best on a MacBook with a notch; other displays use a capsule at the top.
-- Install and sign in to Claude Code / Codex to see the corresponding data.
+- Claude Code and Codex are optional. Install and use a provider to get its data; official quotas require signing in. Without either, the app works as a system monitor. Connect other tools through [custom data sources](#custom-data-sources).
 - Swift 6 and Command Line Tools to build. No Xcode or third-party dependencies required.
 
 ## Privacy
 
-**No data collection, telemetry or session-content uploads.** Local session files are read to display information on your Mac:
+**No data collection, telemetry or session-content uploads.** Local session files are read for enabled built-in providers to display information on your Mac:
 
 - Claude session metadata, main-session transcripts and desktop session titles.
 - Codex's SQLite session index (read-only) and rollout logs as a fallback.
 - Claude OAuth credentials, read at runtime through the system keychain, with `~/.claude/.credentials.json` as a compatibility fallback. Tokens stay in memory and are never logged or exported. AgentIsland does not read Claude session key files or `~/.codex/auth.json`.
 
-AgentIsland's own HTTP client only contacts the Claude usage endpoint at `api.anthropic.com`; it does not follow redirects or retain HTTP caches or cookies. Codex quota comes from the official `codex app-server` subprocess. Official subprocesses may contact their own services, including during Claude token renewal described below.
+Automatic detection of built-in sources only checks whether `~/.claude` and `~/.codex` directories exist, not whether a CLI or desktop app is installed. Third-party backend detection separately checks for the presence of Claude credentials without reading their contents and uses the last observed model name. Only that model name, not the session content used to identify it, is saved in AgentIsland's own UserDefaults.
+
+GPU usage is read through IOKit from IOAccelerator system statistics, without administrator privileges or extra permissions. The metric is hidden when the device provides no reading.
+
+For official Claude quotas, a web or desktop login may not grant Claude Code OAuth access; run `claude auth login` in Terminal. Once a third-party backend is detected, AgentIsland skips official Claude quota queries and their renewal flow.
+
+AgentIsland's own HTTP client only contacts the Claude usage endpoint at `api.anthropic.com`; it does not follow redirects or retain HTTP caches or cookies. Codex quota comes from the official `codex app-server` subprocess. Official subprocesses may contact their own services, including during Claude token renewal described below. Custom commands may also access the network according to your script; the HTTP restriction does not apply to the entire subprocess tree.
 
 AgentIsland itself reads provider data and settings without modifying them, installing hooks or changing statusLine. Its settings and connection diagnostics remain in its own local storage. Official CLI renewal may update official credentials. Diagnostic exports such as `--dump sessions` contain titles and project paths; redact them before sharing.
+
+Custom commands are stored in plain text in app settings; output and parsed results stay in memory. Custom entries in `--dump providers` exclude commands and output; `--dump quota` runs enabled custom sources and exports parsed quotas. See the next section for details.
 
 Brand icons are loaded from locally installed Claude / ChatGPT apps, with drawn fallbacks. Third-party icon files are not bundled or distributed as standalone assets; screenshots illustrate the interface.
 
 ## Custom data sources
 
 Open Settings → Custom data sources (自定义数据源) → Add (添加), enter a name and command, choose a 1 / 5 / 15 / 30 minute interval (default: 5), and use Test run (测试运行) before saving. This feature requires scripting knowledge; no additional services are built in. Optionally choose a local `.app` icon and badge color. Enable, edit, delete, or reorder providers with ↑ / ↓. The collapsed wings show the first two enabled quota providers; expanded quota cards use two columns.
+
+This mock-data example shows Claude, Codex, “API 余额” (API balance) and “团队额度” (team quota) in a 2×2 grid, demonstrating a text balance and a monthly remaining percentage.
+
+![Custom data sources](docs/images/custom-sources.png)
 
 Commands run as the current user via `/bin/zsh -lc`, with the user home directory as the working directory. The login shell loads PATH from `.zprofile`; use absolute paths if a command cannot be found. Each source refreshes independently, including on launch, unlock, wake, and manual refresh. Lock and sleep pause execution. The same source never runs concurrently; at most three custom commands run at once, including test previews. Commands time out after 15 seconds: SIGTERM targets the entire process group, followed by SIGKILL after two seconds if needed. Disabling or deleting a source also terminates its group. Failures retain the last successful data and mark it stale.
 
@@ -65,7 +86,7 @@ Standard output may contain a single remaining-percentage number or full JSON:
 }
 ```
 
-`windows` accepts 1–4 entries; additional entries are ignored with a warning. Each window has a `label` and exactly one of `remainingPercent`, `usedPercent`, or `valueText`. Percentages must be finite and are clamped to 0–100; text is limited to 12 characters. Settings display warnings for missing labels, truncated text, and extra windows. Unknown fields are ignored. `plan`, `note`, ISO 8601 `resetsAt`, and positive `periodSeconds` are optional. The first window is a custom source's headline. When only one source is enabled, complete periods select the shortest and longest windows; otherwise the first two windows are used. Wing text truncates to the available width.
+`windows` accepts 1–4 entries; additional entries are ignored with a warning. Each window has a `label` and exactly one of `remainingPercent`, `usedPercent`, or `valueText`. Percentages must be finite and are clamped to 0–100; text is limited to 12 characters. Settings display warnings for missing labels, truncated text, and extra windows. Unknown fields are ignored. `plan`, `note`, ISO 8601 `resetsAt`, and positive `periodSeconds` are optional. The first window is a custom source's headline. When only one source is enabled, complete periods select the shortest and longest windows; otherwise the first two windows are used. With only one window, the other wing shows CPU. Wing text shrinks first, then hides its icon, and truncates only if necessary; it keeps neither partial decimal fractions nor separators before the ellipsis.
 
 Example 1 — a remaining percentage:
 
@@ -144,7 +165,7 @@ To start at login, right-click the island and open Settings after installing in 
 - Quota polling and system-metric sampling pause while locked or asleep. While the process can still run, session scans are limited to once per provider every 30 seconds; unlock or wake triggers an immediate refresh.
 - **Claude token renewal starts the official CLI in a hidden pseudoterminal.** Access tokens typically expire after about eight hours, and ordinary non-interactive queries cannot trigger renewal. When renewal is needed, AgentIsland starts one interactive CLI session, waits for a ready prompt, sends the local `/usage` command to trigger official renewal, then exits. It sends no conversation prompt and uses no model quota. AgentIsland does not call the refresh endpoint or write keychain credentials itself; the official CLI may use the network and update its own credentials.
 - Renewal uses a dedicated AgentIsland directory with Chrome prompts and Remote Control disabled by launch arguments. Setup, trust and login prompts stop the attempt and require you to finish in Terminal; the app never accepts them for you. CLI changes or expired login sessions can still require manual action.
-- Provider formats may change. Fan metrics are hidden on unsupported devices. Both processor architectures are build targets, but not every hardware combination has been tested.
+- Provider formats may change. GPU and fan metrics are hidden on unsupported devices. Both processor architectures are build targets, but not every hardware combination has been tested.
 
 ## Acknowledgments and license
 

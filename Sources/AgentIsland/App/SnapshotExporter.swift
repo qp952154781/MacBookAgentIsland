@@ -111,6 +111,7 @@ import IslandCore
                 }
             }
         }
+        for name in readmeScenarios { cases.append((name, .idle, .expanded, true)) }
         var files: [String: Data] = [:]
         for (name, scenario, mode, hasNotch) in cases {
             let store = IslandStore.mock(scenario, now: now)
@@ -132,6 +133,7 @@ import IslandCore
                 }
             }
             if name.hasPrefix("custom-") { configureCustomSources(store, scenario: name) }
+            if readmeScenarios.contains(name) { configureReadme(store, scenario: name) }
             switch name {
             case "expanded-system-cpu-warning", "no-notch-system-cpu-warning":
                 store.systemMetrics.cpu = .init(percent: 85, sampleIntervalMs: 1000)
@@ -362,6 +364,58 @@ import IslandCore
         }
         guard let data else { throw ExportError.renderFailed("settings") }
         return data
+    }
+
+    static let readmeScenarios = ["readme-expanded", "readme-custom"]
+
+    /// README-only fixtures: no services, settings, commands, or host data are accessed here.
+    static func configureReadme(_ store: IslandStore, scenario: String) {
+        guard readmeScenarios.contains(scenario) else { return }
+        store.sessionListLayout = .automatic
+        store.systemMetrics = SystemMetrics(
+            network: .init(downBytesPerSec: 2.5 * 1024 * 1024, upBytesPerSec: 180 * 1024, interfaces: ["en0"]),
+            fan: .init(fans: [.init(index: 0, rpm: 2507, minRPM: 2317, maxRPM: 6550)]),
+            memory: .init(usedBytes: 72 * 1024, totalBytes: 100 * 1024),
+            cpu: .init(percent: 12, sampleIntervalMs: 1000), gpu: .init(percent: 31))
+        if scenario == "readme-custom" {
+            // Commands are inert metadata; both quota snapshots are assigned directly in memory.
+            let balance = CustomSource(id: .init(rawValue: "custom-readme-balance"), name: "API 余额",
+                                       command: "echo 62", colorIndex: 1)
+            let team = CustomSource(id: .init(rawValue: "custom-readme-team"), name: "团队额度",
+                                    command: "echo 62", colorIndex: 2)
+            store.customSources = [balance, team]
+            store.quotas[balance.id] = .init(agent: balance.id, windows: [
+                .init(id: "balance", kind: .other, label: "余额", usedPercent: 0, valueText: "¥128.50")
+            ], source: .customCommand, fetchedAt: now.addingTimeInterval(-60))
+            store.quotas[team.id] = .init(agent: team.id, plan: "Team", windows: [
+                .init(id: "monthly", kind: .other, label: "本月", usedPercent: 38, periodSeconds: 2_592_000)
+            ], source: .customCommand, fetchedAt: now.addingTimeInterval(-60))
+            store.health[balance.id] = .ok
+            store.health[team.id] = .ok
+        } else {
+            // Eight non-ended sessions select the automatic 900 pt layout on the synthetic notch display.
+            // Each column's first three rows cover running, thinking, and waiting for input.
+            let examples: [(ProviderID, String, String, SessionPhase, String)] = [
+                (.claude, "重构登录模块", "web-app", .runningTool, "编辑登录表单"),
+                (.claude, "分析启动耗时", "web-app", .thinking, "梳理模块加载顺序"),
+                (.claude, "梳理接口文档", "api-server", .waitingInput, "等待确认接口命名"),
+                (.claude, "检查表单校验", "demo-dashboard", .waitingInput, "等待确认校验提示"),
+                (.codex, "补齐单元测试", "api-server", .runningTool, "运行测试套件"),
+                (.codex, "优化列表加载", "demo-dashboard", .thinking, "比较分页方案"),
+                (.codex, "修复打包脚本", "web-app", .waitingInput, "等待确认构建产物"),
+                (.codex, "整理帮助页面", "docs-site", .waitingInput, "等待确认页面目录")
+            ]
+            store.sessions = examples.enumerated().map { index, example in
+                let (agent, title, project, phase, activity) = example
+                return AgentSession(agent: agent, sessionId: "readme-\(index)", title: title,
+                                    projectName: project, phase: phase, activity: activity,
+                                    context: .init(usedTokens: 32_000 + index * 4_000, windowTokens: 200_000),
+                                    turnStartedAt: now.addingTimeInterval(-Double((index + 1) * 60)),
+                                    turnEndedAt: phase == .waitingInput ? now.addingTimeInterval(-30) : nil,
+                                    toolCallsThisTurn: index + 2, lastActivityAt: now.addingTimeInterval(-Double(index * 10)),
+                                    isAlive: true)
+            }
+        }
     }
 
     static func configureCustomSources(_ store: IslandStore, scenario: String) {
