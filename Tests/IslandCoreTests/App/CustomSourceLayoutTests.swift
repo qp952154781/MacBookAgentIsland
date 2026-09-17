@@ -107,3 +107,25 @@ import Testing
         }
     }
 }
+
+@MainActor @Test func customBalanceSnapshotsActuallyHideIconThenTruncate() throws {
+    for scenario in ["custom-left-hide-icon", "custom-left-truncated"] {
+        let store = IslandStore.mock(.idle, now: SnapshotExporter.now)
+        SnapshotExporter.configureCustomSources(store, scenario: scenario)
+        let value = try #require(store.headline(for: store.quotaProviderIDs[0])?.valueText)
+        let available = IslandLayout.wingRects(notch: SnapshotExporter.metrics(hasNotch: true), config: store.layoutConfig).left.width
+        // Font metrics only: exercise the display's actual fitting code without rendering or starting commands.
+        let text = ValueTextWingText(value: value, fontSize: 10, availableWidth: available, iconSize: 13, spacing: 3)
+        #expect(!text.layout.showsIcon)
+        #expect(text.layout.fontScale >= ValueTextWingLayout.minimumScale)
+        #expect(ValueTextWingText.measure(text.value, font: text.font) * text.layout.fontScale <= available)
+        if scenario == "custom-left-hide-icon" {
+            #expect(value == "¥12345.67")
+            #expect(!text.layout.truncates && text.value == value)
+        } else {
+            #expect(text.layout.truncates && text.value.hasSuffix("…"))
+            #expect(text.value.dropLast().last?.isNumber == true)
+            #expect(!text.value.contains("."))
+        }
+    }
+}

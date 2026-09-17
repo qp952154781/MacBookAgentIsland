@@ -379,7 +379,7 @@ import IslandCore
         if scenario.hasPrefix("custom-left") {
             store.providerOrder = [second.id, .claude, .codex, first.id]
             store.wingWidth = scenario == "custom-left-wide" ? 100 : 60
-            if scenario == "custom-left-hide-icon" { store.quotas[second.id]?.windows[0].valueText = "¥123456.78" }
+            if scenario == "custom-left-hide-icon" { store.quotas[second.id]?.windows[0].valueText = "¥12345.67" }
             if scenario == "custom-left-truncated" { store.quotas[second.id]?.windows[0].valueText = "¥12345678.90" }
         }
         if scenario == "custom-single-value" {
