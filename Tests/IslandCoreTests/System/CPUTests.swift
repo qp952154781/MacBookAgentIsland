@@ -87,8 +87,7 @@ import Testing
 @MainActor @Test func cpuHardwareFitsWingsAndKeepsWidthAcrossDigits() {
     for hasNotch in [true, false] {
         let notch = SnapshotExporter.metrics(hasNotch: hasNotch)
-        let available = IslandLayout.expandedWingRects(notch: notch).right.width
-        var widths: [CGFloat] = []
+        var plans: [SystemTopBandPlan] = []
         for (usedBytes, rpm): (UInt64, Double) in [(9, 0), (73, 2500), (100, 6550)] {
             for percent: Double? in [nil, 9, 12, 85, 100] {
                 let metrics = SystemMetrics(
@@ -96,13 +95,13 @@ import Testing
                     memory: .init(usedBytes: usedBytes, totalBytes: 100),
                     cpu: percent.map { .init(percent: $0, sampleIntervalMs: 1000) })
                 let status = SystemStatusView(metrics: metrics, options: .init(), notch: notch, config: .init())
-                let view = NSHostingView(rootView: status.hardware(maximumItems: hasNotch ? 2 : 4)
-                    .font(Theme.font(10, weight: .medium)).monospacedDigit())
-                let width = view.fittingSize.width
-                #expect(width <= available)
-                widths.append(width)
+                let plan = status.layoutPlan
+                #expect(!plan.hidden.contains(.cpu))
+                #expect(!plan.hidden.contains(.memory))
+                #expect(!plan.hidden.contains(.fan))
+                plans.append(plan)
             }
         }
-        #expect(widths.allSatisfy { abs($0 - (widths.first ?? 0)) < 0.01 })
+        #expect(plans.allSatisfy { $0 == plans.first })
     }
 }

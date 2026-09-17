@@ -86,7 +86,7 @@ struct ExpandedView: View {
                 Button(action: settings) { Image(systemName: "gearshape").frame(width: 24, height: 24) }.help("设置").islandInteraction(.control("settings"))
             }.font(.system(size: 11)).foregroundStyle(Theme.secondary).buttonStyle(.plain)
                 .frame(height: 24).padding(.top, 8)
-        }.padding(.horizontal, 16).padding(.bottom, 12).frame(height: availableHeight)
+        }.padding(.horizontal, IslandLayout.expandedContentInset).padding(.bottom, 12).frame(height: availableHeight)
     }
     private static let sessionViewportSpace = "sessionViewport"
 

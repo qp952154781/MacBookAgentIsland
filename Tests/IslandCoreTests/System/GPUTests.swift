@@ -195,17 +195,14 @@ private actor FakeGPUReader: GPUReading {
 }
 
 @Test func gpuUnavailableAndDisabledItemsDoNotConsumeWidth() {
-    let options = SystemMetricOptions()
-    #expect(SystemHardwareLayout.items(options: options, metrics: .init()) == [.cpu, .memory])
-    var metrics = SystemMetrics(gpu: .init(percent: 31))
-    metrics.fan = .init(fans: [.init(index: 0, rpm: 2507, minRPM: 0, maxRPM: 6000)])
-    #expect(SystemHardwareLayout.items(options: options, metrics: metrics) == [.cpu, .gpu, .memory, .fan])
-    #expect(SystemHardwareLayout.items(options: options, metrics: metrics, maximumCount: 3) == [.cpu, .gpu, .memory])
-    #expect(SystemHardwareLayout.items(options: options, metrics: metrics, maximumCount: 2) == [.cpu, .gpu])
-    #expect(SystemHardwareLayout.items(options: options, metrics: metrics, maximumCount: 1) == [.cpu])
-    #expect(SystemHardwareLayout.items(options: options, metrics: metrics, maximumCount: 0).isEmpty)
-    #expect(SystemHardwareLayout.items(options: .init(cpu: false), metrics: metrics, maximumCount: 2) == [.gpu, .memory])
-    #expect(SystemHardwareLayout.items(options: .init(gpu: false), metrics: metrics, maximumCount: 2) == [.cpu, .memory])
+    #expect(SystemTopBandLayout.enabledItems(options: .init(), gpuAvailable: false, fanAvailable: false)
+            == [.download, .upload, .cpu, .memory])
+    #expect(SystemTopBandLayout.enabledItems(options: .init(), gpuAvailable: true, fanAvailable: true)
+            == [.download, .upload, .cpu, .gpu, .memory, .fan])
+    #expect(SystemTopBandLayout.enabledItems(options: .init(cpu: false), gpuAvailable: true, fanAvailable: true)
+            == [.download, .upload, .gpu, .memory, .fan])
+    #expect(SystemTopBandLayout.enabledItems(options: .init(gpu: false), gpuAvailable: true, fanAvailable: true)
+            == [.download, .upload, .cpu, .memory, .fan])
 }
 
 private actor SuspendedGPUProvider: SystemMetricsProviding {

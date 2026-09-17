@@ -80,6 +80,13 @@ import IslandCore
                 }
             }
         }
+        for hasNotch in [true, false] {
+            for width in [600, 900] {
+                for percent in [9, 100] {
+                    cases.append(("top-band-\(width)-\(hasNotch ? "notch" : "capsule")-\(percent)", .idle, .expanded, hasNotch))
+                }
+            }
+        }
         for suffix in ["no-fan", "cpu-only", "empty", "unavailable"] {
             cases.append(("system-gpu-narrow-" + suffix, .idle, .expanded, true))
         }
@@ -170,6 +177,16 @@ import IslandCore
             default: break
             }
             var notch = metrics(hasNotch: hasNotch)
+            if name.hasPrefix("top-band-") {
+                let percent = name.hasSuffix("-9") ? 9 : 100
+                store.sessionListLayout = name.contains("900") ? .twoColumns : .singleColumn
+                store.systemMetrics.cpu = .init(percent: Double(percent), sampleIntervalMs: 1000)
+                store.systemMetrics.gpu = .init(percent: Double(percent))
+                store.systemMetrics.memory = .init(usedBytes: UInt64(percent), totalBytes: 100)
+                let down: Double = percent == 9 ? 344_064 : 2_936_012.8
+                let up: Double = percent == 9 ? 2_936_012.8 : 1_022_976
+                store.systemMetrics.network = .init(downBytesPerSec: down, upBytesPerSec: up, interfaces: ["en0"])
+            }
             if name.hasPrefix("system-gpu-") {
                 store.systemMetrics.gpu = .init(percent: name.hasSuffix("critical") ? 97 : 85)
                 store.sessionListLayout = name.contains("900") ? .twoColumns : .singleColumn
@@ -350,12 +367,34 @@ private struct SnapshotScene: View {
                 Canvas { context, _ in
                     if notch.hasNotch {
                         context.stroke(Path(localRect(notch.notchRect).insetBy(dx: 0.5, dy: 0.5)), with: .color(.red), lineWidth: 1)
+                        let safety = store.layoutConfig(notch: notch).notchSafetyInset
+                        context.stroke(Path(localRect(notch.notchRect).insetBy(dx: -safety, dy: 0)),
+                                       with: .color(.orange), lineWidth: 1)
                     }
-                    let wings = mode == .expanded && store.systemMetricOptions.enabled
-                        ? IslandLayout.expandedWingRects(notch: notch, config: store.layoutConfig(notch: notch))
-                        : IslandLayout.wingRects(notch: notch, config: store.layoutConfig)
-                    for rect in [wings.left, wings.right] {
-                        context.stroke(Path(localRect(rect).insetBy(dx: 0.5, dy: 0.5)), with: .color(.green), lineWidth: 1)
+                    if mode == .expanded && store.systemMetricOptions.enabled {
+                        let config = store.layoutConfig(notch: notch)
+                        let frame = IslandLayout.frame(for: .expanded, notch: notch, config: config)
+                        let regions = SystemTopBandLayout.regions(panelWidth: frame.width,
+                            notchWidth: notch.hasNotch ? notch.notchRect.width : nil,
+                            notchSafetyInset: config.notchSafetyInset)
+                        for region in regions {
+                            let rect = CGRect(x: frame.minX + region.x, y: notch.notchRect.minY,
+                                              width: region.width, height: notch.notchRect.height)
+                            context.stroke(Path(localRect(rect).insetBy(dx: 0.5, dy: 0.5)), with: .color(.green), lineWidth: 1)
+                        }
+                        for x in [frame.minX + IslandLayout.expandedContentInset, frame.maxX - IslandLayout.expandedContentInset] {
+                            let guide = CGRect(x: x, y: frame.maxY - frame.height, width: 0, height: frame.height)
+                            let rect = localRect(guide)
+                            var line = Path()
+                            line.move(to: CGPoint(x: rect.minX, y: rect.minY))
+                            line.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+                            context.stroke(line, with: .color(.cyan.opacity(0.7)), lineWidth: 1)
+                        }
+                    } else {
+                        let wings = IslandLayout.wingRects(notch: notch, config: store.layoutConfig)
+                        for rect in [wings.left, wings.right] {
+                            context.stroke(Path(localRect(rect).insetBy(dx: 0.5, dy: 0.5)), with: .color(.green), lineWidth: 1)
+                        }
                     }
                 }.allowsHitTesting(false)
             }

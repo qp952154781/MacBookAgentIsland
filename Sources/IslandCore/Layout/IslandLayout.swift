@@ -15,6 +15,9 @@ public struct IslandLayoutConfig: Sendable, Equatable {
 }
 
 public enum IslandLayout {
+    /// Shared outer alignment for quota cards and the expanded system metrics band.
+    public static let expandedContentInset: CGFloat = 16
+
     /// Keep the notch anchor even when a side Dock makes the visible frame asymmetric.
     public static func maximumCenteredWidth(notch: NotchMetrics) -> CGFloat {
         let visible = NSIntersectionRect(notch.visibleFrame, notch.screenFrame)
