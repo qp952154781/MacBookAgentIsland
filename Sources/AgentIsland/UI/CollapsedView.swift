@@ -10,13 +10,57 @@ struct CollapsedView: View {
     private var config: IslandLayoutConfig { store.layoutConfig }
 
     var body: some View {
-        let providers = ProviderLayout.wings()
+        let providers = ProviderLayout.wings(in: store.visibleProviderIDs)
+        let adaptive = store.providerWings
         HStack(alignment: .top, spacing: 0) {
-            wing(providers.left, isLeading: true)
+            if store.visibleProviderIDs.count >= 2, let id = providers.left, store.quotaProviderIDs.contains(id) {
+                wing(id, isLeading: true)
+            } else { adaptiveWing(adaptive.left, leading: true) }
             Color.clear.frame(width: notch.notchRect.width)
-            wing(providers.right, isLeading: false)
+            if store.visibleProviderIDs.count >= 2, let id = providers.right, store.quotaProviderIDs.contains(id) {
+                wing(id, isLeading: false)
+            } else { adaptiveWing(adaptive.right, leading: false) }
         }
         .frame(height: notch.notchRect.height, alignment: .top)
+    }
+
+    private func adaptiveWing(_ content: ProviderWingLayout.Content, leading: Bool) -> some View {
+        let agent = content.agent
+        let showBrand = agent != nil && (!store.providerWings.singleProvider || leading)
+        let working = showBrand ? agent.map { store.workingSessions(for: $0) } ?? [] : []
+        let narrow = config.wingWidth < 68
+        let value: String
+        let label: String
+        let color: Color
+        switch content {
+        case let .quota(id, window, period):
+            value = store.quotaDisplayMode.percent(window); label = period ?? ""
+            color = Theme.quota(window, agent: id, warningThreshold: store.warningThreshold, criticalThreshold: store.criticalThreshold)
+        case let .sessions(id, count): value = "\(count)"; label = "会话"; color = Theme.brand(id)
+        case .cpu: value = metricPercent(store.systemMetrics.cpu?.percent); label = "CPU"; color = Theme.primary
+        case .memory: value = metricPercent(store.systemMetrics.memory?.percent); label = "内存"; color = Theme.primary
+        }
+        return HStack(spacing: narrow ? 2 : 3) {
+            if showBrand, let agent {
+                AgentGlyph(agent: agent, working: !working.isEmpty, animated: animated && animationsVisible)
+                    .frame(width: narrow ? 11 : 14, height: narrow ? 11 : 14)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value).font(Theme.font(narrow ? 9 : 12, weight: .semibold)).monospacedDigit().foregroundStyle(color)
+                if !label.isEmpty { Text(label).font(Theme.font(narrow ? 6 : 8)).foregroundStyle(Theme.secondary) }
+            }.fixedSize().frame(height: notch.notchRect.height)
+                .overlay(alignment: .bottom) {
+                    if active, !working.isEmpty, let agent {
+                        ActivityLine(fraction: working.first?.plan?.fraction, color: Theme.brand(agent), animated: animated, running: animationsVisible)
+                            .frame(width: 18, height: 2).padding(.bottom, 3)
+                    }
+                }
+        }.offset(y: active && !working.isEmpty ? -2 : 0)
+            .frame(width: config.wingWidth, height: notch.notchRect.height)
+    }
+    private func metricPercent(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "--" }
+        return "\(Int(min(100, max(0, value)).rounded()))%"
     }
 
     @ViewBuilder private func wing(_ agent: ProviderID?, isLeading: Bool) -> some View {

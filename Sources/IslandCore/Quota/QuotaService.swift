@@ -24,6 +24,7 @@ public struct SystemQuotaClock: QuotaClock {
 
 public actor QuotaService: QuotaServicing {
     private let providers: [ProviderID: any QuotaProviding]
+    private var enabledIDs: [ProviderID]
     private var intervals: [ProviderID: TimeInterval]
     private let diagnostics: ClaudeDiagnostics
     private let clock: any QuotaClock
@@ -39,19 +40,36 @@ public actor QuotaService: QuotaServicing {
     private var running = false
     private var suspended = false
     private var lifecycle = UUID()
+    private var providerVersion = UUID()
 
     public init(providers: [any QuotaProviding] = [ClaudeQuotaProvider(), CodexQuotaProvider()],
                 intervals: [ProviderID: TimeInterval] = [.claude: 120, .codex: 120],
                 clock: any QuotaClock = SystemQuotaClock(), diagnostics: ClaudeDiagnostics = .disabled, jitter: @escaping @Sendable () -> Double = { Double.random(in: -1...1) }) {
         var byAgent: [ProviderID: any QuotaProviding] = [:]
         for provider in providers { byAgent[provider.agent] = provider }
+        self.enabledIDs = providers.map(\.agent)
         self.diagnostics = diagnostics; self.providers = byAgent; self.intervals = intervals; self.clock = clock; self.jitter = jitter
+    }
+
+    public func setEnabledProviders(_ ids: [ProviderID]) async {
+        let next = ids.filter { providers[$0] != nil }
+        guard next != enabledIDs else { return }
+        let removed = enabledIDs.filter { !next.contains($0) }
+        enabledIDs = next
+        providerVersion = UUID()
+        let token = providerVersion
+        let cancelled = removed.compactMap { workers.removeValue(forKey: $0) }
+        for id in removed { versions[id] = nil; latest[id] = nil; snapshots[id] = nil; failures[id] = nil }
+        cancelled.forEach { $0.cancel() }
+        for task in cancelled { await task.value }
+        guard token == providerVersion, running, !suspended, !Task.isCancelled else { return }
+        for id in enabledIDs where workers[id] == nil { launch(id, repeating: true) }
     }
 
     public func setInterval(_ seconds: TimeInterval) async {
         let value = seconds.isFinite ? max(30, seconds) : 60
-        guard ProviderRegistry.orderedIDs.contains(where: { intervals[$0] != value }) else { return }
-        for agent in ProviderRegistry.orderedIDs { intervals[agent] = value }
+        guard providers.keys.contains(where: { intervals[$0] != value }) else { return }
+        for agent in providers.keys { intervals[agent] = value }
         if running { await refreshNow() }
     }
 
@@ -59,7 +77,7 @@ public actor QuotaService: QuotaServicing {
         let id = UUID()
         let pair = AsyncStream<QuotaUpdate>.makeStream(bufferingPolicy: .bufferingNewest(max(1, providers.count)))
         subscribers[id] = pair.continuation
-        for agent in ProviderRegistry.orderedIDs { if let update = latest[agent] { pair.continuation.yield(update) } }
+        for agent in enabledIDs { if let update = latest[agent] { pair.continuation.yield(update) } }
         pair.continuation.onTermination = { [weak self] _ in Task { await self?.removeSubscriber(id) } }
         return pair.stream
     }
@@ -68,7 +86,7 @@ public actor QuotaService: QuotaServicing {
         guard !running else { return }
         running = true; lifecycle = UUID()
         guard !suspended else { return }
-        for agent in providers.keys where workers[agent] == nil { launch(agent, repeating: true) }
+        for agent in enabledIDs where workers[agent] == nil { launch(agent, repeating: true) }
     }
 
     /// Preserve subscribers while hidden; wake resumes the existing store connection.
@@ -81,8 +99,8 @@ public actor QuotaService: QuotaServicing {
             tasks.forEach { $0.cancel() }
             for task in tasks { await task.value }
         } else if running {
-            await (providers[.claude] as? any ClaudeConnectionProviding)?.retryConnection()
-            for agent in providers.keys where workers[agent] == nil { launch(agent, repeating: true) }
+            if enabledIDs.contains(.claude) { await (providers[.claude] as? any ClaudeConnectionProviding)?.retryConnection() }
+            for agent in enabledIDs where workers[agent] == nil { launch(agent, repeating: true) }
         }
     }
 
@@ -99,10 +117,10 @@ public actor QuotaService: QuotaServicing {
     /// While stopped this performs one query; it does not start a scheduling loop.
     public func refreshNow(agent: ProviderID? = nil) async {
         guard !suspended else { return }
-        let selected = agent.map { [$0] } ?? ProviderRegistry.orderedIDs
+        let selected = agent.map { [$0] } ?? enabledIDs
         let epoch = lifecycle
         var replaced: [(ProviderID, UUID, Task<Void, Never>?)] = []
-        for key in selected where providers[key] != nil {
+        for key in selected where enabledIDs.contains(key) && providers[key] != nil {
             let token = UUID(), task = workers[key]
             versions[key] = token
             task?.cancel()
@@ -114,6 +132,7 @@ public actor QuotaService: QuotaServicing {
     }
 
     public func retryClaudeConnection() async {
+        guard enabledIDs.contains(.claude) else { return }
         await (providers[.claude] as? any ClaudeConnectionProviding)?.retryConnection()
         await refreshNow(agent: .claude)
     }

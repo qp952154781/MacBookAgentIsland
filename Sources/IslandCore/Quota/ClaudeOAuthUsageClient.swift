@@ -39,6 +39,7 @@ public struct EphemeralUsageHTTPTransport: UsageHTTPTransport {
 
 public actor ClaudeOAuthUsageClient {
     public static let recoveringMessage = "正在自动恢复连接…"
+    private let credentialsPresent: @Sendable () async -> Bool?
     private let credentials: ClaudeCredentialStore
     private let http: any UsageHTTPTransport
     private let refresher: any ClaudeRefreshing
@@ -63,7 +64,8 @@ public actor ClaudeOAuthUsageClient {
     private var inFlight: Task<QuotaSnapshot, any Error>?
     private var flightID: UUID?
 
-    public init(credentials: ClaudeCredentialStore = ClaudeCredentialStore(),
+    public init(credentialsPresent: @escaping @Sendable () async -> Bool? = { await ClaudeCredentialPresence().exists() },
+                credentials: ClaudeCredentialStore = ClaudeCredentialStore(),
                 http: any UsageHTTPTransport = EphemeralUsageHTTPTransport(),
                 executor: any QuotaCommandExecuting = QuotaCommandExecutor(),
                 locate: @escaping @Sendable () async -> URL? = { await ExecutableLocator.claudeCLI() },
@@ -72,6 +74,7 @@ public actor ClaudeOAuthUsageClient {
                 clock: any QuotaClock = SystemQuotaClock(), diagnostics: ClaudeDiagnostics = .disabled,
                 modificationDate: @escaping @Sendable () async throws -> Date? = { nil },
                 cliVersion: @escaping @Sendable () async -> String? = { nil }) {
+        self.credentialsPresent = credentialsPresent
         self.credentials = credentials; self.http = http; self.now = now; self.clock = clock
         self.diagnostics = diagnostics; self.modificationDate = modificationDate; self.cliVersion = cliVersion
         self.refresher = refresher ?? ClaudeCLIRefresher(expiryReader: ClaudeKeychainExpiryReader(executor: executor),
@@ -169,9 +172,11 @@ public actor ClaudeOAuthUsageClient {
             catch let error as QuotaError {
                 try Task.checkCancellation()
                 if case .notConfigured = error {
-                    connection.expiresAt = nil; connection.isRecovering = true
-                    if !retried, try await recover(force: true, onStatus: onStatus) { retried = true; continue }
-                    throw recoveryError()
+                    connection = ClaudeConnectionStatus()
+                    connection.credentialsMissing = true
+                    connection.requiresUserAction = true; connection.result = .needsLogin
+                    await onStatus(connection)
+                    throw error
                 }
                 throw error
             }
@@ -181,6 +186,7 @@ public actor ClaudeOAuthUsageClient {
                 await diagnostics.record(.retry, at: now(), category: .credentialChanged)
             }
             observedCredential = credential.changeID
+            connection.credentialsMissing = nil
             connection.expiresAt = credential.expiresAt
             let expired = credential.expiresAt.map { $0 <= now() } ?? false
             if expired {
@@ -255,6 +261,18 @@ public actor ClaudeOAuthUsageClient {
             await onStatus(connection)
             return false
         }
+        // Recheck immediately before invoking even an injected refresher: a cached token
+        // or an HTTP response must not authorize CLI startup after credential removal.
+        // Unknown presence (e.g. during unlock) keeps the existing recovery path available.
+        if await credentialsPresent() == false {
+            await credentials.invalidate()
+            connection = ClaudeConnectionStatus()
+            connection.credentialsMissing = true
+            connection.requiresUserAction = true; connection.result = .needsLogin
+            await onStatus(connection)
+            throw QuotaError.notConfigured(ClaudeCredentialStore.loginMessage)
+        }
+        try Task.checkCancellation()
         blocked = false; connection.isRefreshing = true
         await onStatus(connection)
         let started = now(); refreshStarted = started

@@ -13,6 +13,7 @@ struct ClaudeTranscript: SessionLogState {
     var cwd: String?
     var origin: String?
     var model: String?
+    var modelWasObserved = false
     var customTitle: String?
     var lastPrompt: String?
     var userPrompt: String?
@@ -74,7 +75,10 @@ struct ClaudeTranscript: SessionLogState {
             // Split content blocks share stop_reason and usage; retain earlier non-null fields.
             if id == nil || id != assistantID { stopReason = nil }
             assistantID = id
-            model = nonempty(message["model"] as? String) ?? model
+            if let observed = nonempty(message["model"] as? String) {
+                model = observed
+                modelWasObserved = true
+            }
             stopReason = message["stop_reason"] as? String ?? stopReason
             if let usage = message["usage"] as? SessionJSON {
                 let values = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].map { sessionInt(usage[$0]) ?? 0 }

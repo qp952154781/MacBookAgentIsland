@@ -18,6 +18,7 @@ import IslandCore
     init(store: IslandStore, forcedState: IslandMode? = nil) {
         self.store = store
         self.forcedState = forcedState
+        store.onProviderChange = { [weak self] in self?.updateSystemMetrics() }
     }
 
     func setExpansionMethod(_ method: ExpansionMethod) {
@@ -60,8 +61,10 @@ import IslandCore
     }
 
     func updateSystemMetrics(reset: Bool = false) {
-        systemMonitor?.update(expanded: mode == .expanded && animationsVisible,
-                              options: store.systemMetricOptions, reset: reset)
+        let collapsed = store.collapsedMetricOptions
+        let needsSampling = mode == .expanded || collapsed.enabled
+        let options = mode == .expanded || !collapsed.enabled ? store.expandedMetricOptions : collapsed
+        systemMonitor?.update(expanded: animationsVisible && needsSampling, options: options, reset: reset)
     }
 
     func stop() {

@@ -43,7 +43,7 @@ func recordedTerminalClassificationAndWriteGate(name: String) async throws {
         #expect(gate.hasOpened == !setup)
         let pty = FakeClaudePTY(chunks: pieces)
         let future = Date().addingTimeInterval(28_800)
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast, future]), makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast, future]), makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, directory: URL(fileURLWithPath: "/fixture"), timeout: 10)
         let result = await refresher.refresh()
         if setup {

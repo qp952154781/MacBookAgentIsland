@@ -1,6 +1,7 @@
 import Foundation
 
 public struct SessionUpdate: Sendable, Equatable {
+    public var latestClaudeModel: String?
     public var warnings: [ProviderID: String] = [:]
     public var sessions: [AgentSession]
     public var events: [IslandEvent]
@@ -31,13 +32,17 @@ public actor SessionService: SessionServicing {
     private struct Result: Sendable {
         var agent: ProviderID
         var sessions: [AgentSession]
+        var model: String?
         var warning: String?
         var bytes: Int
         var finished: ContinuousClock.Instant
     }
     private let origin: ContinuousClock.Instant
     private let scheduler: any SessionScheduler
-    private let providers: [any SessionProviding]
+    private let allProviders: [any SessionProviding]
+    private var enabledIDs: [ProviderID]
+    private var providers: [any SessionProviding] { enabledIDs.compactMap { id in allProviders.first { $0.agent == id } } }
+    private var latestModel: String?
     private let clock: @Sendable () -> Date
     private var tasks: [Task<Void, Never>] = []
     private var refreshTask: Task<Void, Never>?
@@ -54,6 +59,7 @@ public actor SessionService: SessionServicing {
     public private(set) var refreshCounts: [ProviderID: Int] = [:]
     public private(set) var metrics = SessionRescanMetrics()
     private var running = false
+    private var requestedRunning = false
     private var generation = 0
     private var hasLoaded = false
 
@@ -63,7 +69,7 @@ public actor SessionService: SessionServicing {
 
     init(providers: [any SessionProviding], clock: @escaping @Sendable () -> Date = { Date() },
          scheduler: any SessionScheduler) {
-        self.providers = providers; self.clock = clock
+        self.allProviders = providers; self.enabledIDs = providers.map(\.agent); self.clock = clock
         self.scheduler = scheduler; self.origin = scheduler.now()
     }
     deinit {
@@ -71,8 +77,34 @@ public actor SessionService: SessionServicing {
         refreshTask?.cancel(); delayTask?.cancel()
         for continuation in continuations.values { continuation.finish() }
     }
+    public func latestUpdate() async -> SessionUpdate? { currentUpdate() }
+    private func currentUpdate() -> SessionUpdate? {
+        guard hasLoaded else { return nil }
+        var update = SessionUpdate(sessions: sessions, events: [])
+        update.latestClaudeModel = latestModel; update.warnings = warnings
+        return update
+    }
+
+    public func setEnabledProviders(_ ids: [ProviderID]) async {
+        guard enabledIDs != ids else { return }
+        let wasRunning = requestedRunning
+        running = false; generation += 1
+        let token = generation
+        enabledIDs = ids
+        let previous = tasks, refresh = refreshTask
+        tasks.forEach { $0.cancel() }; tasks.removeAll()
+        refreshTask?.cancel(); delayTask?.cancel()
+        refreshTask = nil; delayTask = nil; delayDeadline = nil
+        pending.removeAll(); lastScans.removeAll()
+        cached = cached.filter { ids.contains($0.key) }; warnings = warnings.filter { ids.contains($0.key) }
+        sessions = cached.values.flatMap { $0 }.sorted(by: sessionOrder)
+        for task in previous { await task.value }; await refresh?.value
+        guard token == generation else { return }
+        if wasRunning && requestedRunning { await start() }
+    }
+
     public func setActiveWindow(_ seconds: TimeInterval) async {
-        for provider in providers { await provider.setActiveWindow(seconds) }
+        for provider in allProviders { await provider.setActiveWindow(seconds) }
         if running { await refreshNow() }
     }
 
@@ -92,18 +124,14 @@ public actor SessionService: SessionServicing {
         let pair = AsyncStream<SessionUpdate>.makeStream(bufferingPolicy: .bufferingNewest(16))
         continuations[id] = pair.continuation
         pair.continuation.onTermination = { [weak self] _ in Task { await self?.removeSubscriber(id) } }
-        if hasLoaded {
-            var update = SessionUpdate(sessions: sessions, events: [])
-            update.warnings = warnings
-            pair.continuation.yield(update)
-        }
+        if let update = currentUpdate() { pair.continuation.yield(update) }
         return pair.stream
     }
     private func removeSubscriber(_ id: UUID) { continuations.removeValue(forKey: id) }
 
     public func start() async {
         guard !running else { return }
-        running = true
+        running = true; requestedRunning = true
         hasLoaded = false
         for provider in providers {
             let changes = provider.changes(), agent = provider.agent
@@ -114,12 +142,18 @@ public actor SessionService: SessionServicing {
                 }
             })
         }
-        tasks.append(Task { [weak self, scheduler] in
-            while !Task.isCancelled {
-                do { try await scheduler.sleep(until: scheduler.now().advanced(by: .seconds(30))) } catch { break }
-                await self?.reconcile()
-            }
-        })
+        if !providers.isEmpty {
+            tasks.append(Task { [weak self, scheduler] in
+                while !Task.isCancelled {
+                    do { try await scheduler.sleep(until: scheduler.now().advanced(by: .seconds(30))) } catch { break }
+                    await self?.reconcile()
+                }
+            })
+        }
+        if providers.isEmpty {
+            hasLoaded = true
+            if let update = currentUpdate() { continuations.values.forEach { $0.yield(update) } }
+        }
         await refreshNow()
     }
 
@@ -136,7 +170,7 @@ public actor SessionService: SessionServicing {
     }
 
     public func stop() async {
-        running = false
+        running = false; requestedRunning = false
         generation += 1
         let stoppedTasks = tasks, stoppedRefresh = refreshTask
         tasks.forEach { $0.cancel() }; tasks.removeAll()
@@ -163,6 +197,7 @@ public actor SessionService: SessionServicing {
     }
 
     private func enqueue(agent: ProviderID, paths: Set<String>?) {
+        guard enabledIDs.contains(agent) else { return }
         if pending[agent] != nil || deadline(for: agent) > scheduler.now() {
             metrics.sessionRescansSkipped += 1
         }
@@ -203,7 +238,7 @@ public actor SessionService: SessionServicing {
                 for (provider, paths) in requests {
                     group.addTask { [scheduler] in
                         let values = await provider.currentSessions(now: now, changedPaths: paths)
-                        return Result(agent: provider.agent, sessions: values,
+                        return Result(agent: provider.agent, sessions: values, model: await provider.latestObservedModel(),
                                       warning: await provider.diagnosticMessage(), bytes: await provider.parsedBytesLastScan(), finished: scheduler.now())
                     }
                 }
@@ -213,6 +248,7 @@ public actor SessionService: SessionServicing {
             }
             guard token == generation, !Task.isCancelled else { return }
             let previousWarnings = warnings
+            let previousModel = latestModel
             for result in results {
                 // Include provider scheduling/IO time in the cooldown so executor contention
                 // cannot shorten the actual interval between successive scans below 500 ms.
@@ -220,11 +256,19 @@ public actor SessionService: SessionServicing {
                 cached[result.agent] = result.sessions
                 warnings[result.agent] = result.warning
                 metrics.parsedBytesTotal += result.bytes
+                if result.agent == .claude {
+                    // Real providers retain parser evidence after sessions expire; fixture
+                    // providers may supply only sessions through the default protocol method.
+                    if let model = result.model ?? result.sessions.filter({ $0.model?.isEmpty == false })
+                        .max(by: { $0.lastActivityAt < $1.lastActivityAt })?.model {
+                        latestModel = model
+                    }
+                }
             }
             let combined = cached.values.flatMap { $0 }.sorted(by: sessionOrder)
             // Timing/byte counters never participate in observable equality. One-shot event flags
             // are computed only after the persistent sessions/warnings actually change.
-            guard !hasLoaded || combined != sessions || previousWarnings != warnings else { continue }
+            guard !hasLoaded || combined != sessions || previousWarnings != warnings || previousModel != latestModel else { continue }
             let events = deduper.filter(detectSessionEvents(old: sessions, new: combined, now: now), now: now)
             let changed = hasLoaded && combined.contains { next in
                 next.agent == .codex && next.tokenCountRevision != nil &&
@@ -233,6 +277,7 @@ public actor SessionService: SessionServicing {
             hasLoaded = true
             sessions = combined
             var update = SessionUpdate(sessions: sessions, events: events, codexTokenCountChanged: changed)
+            update.latestClaudeModel = latestModel
             update.warnings = warnings
             metrics.updatesPublished += 1
             for continuation in continuations.values { continuation.yield(update) }

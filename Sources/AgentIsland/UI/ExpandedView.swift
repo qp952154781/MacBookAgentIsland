@@ -15,13 +15,19 @@ struct ExpandedView: View {
     var copyLogin: (ProviderID) -> Void = { _ in }
 
     static func cardHeight(store: IslandStore) -> CGFloat {
-        let count = store.quotas.values.map { $0.windows.count }.max() ?? 0
-        let hasNote = store.quotas.values.contains { store.quotaDisplayMode.fallbackNote($0) != nil }
-        return max(134, 50 + CGFloat(min(4, count)) * 27 + (hasNote ? 18 : 0)) + ((store.claudeConnection?.isRefreshing == true || store.claudeConnection?.isRecovering == true) && store.claudeConnection?.requiresUserAction != true ? 36 : 0)
+        guard !store.quotaProviderIDs.isEmpty else { return 0 }
+        let snapshots = store.quotaProviderIDs.compactMap { store.quotas[$0] }
+        let count = snapshots.map { $0.windows.count }.max() ?? 0
+        let hasNote = snapshots.contains { store.quotaDisplayMode.fallbackNote($0) != nil }
+        return max(134, 50 + CGFloat(min(4, count)) * 27 + (hasNote ? 18 : 0)) + (store.quotaProviderIDs.contains(.claude) && (store.claudeConnection?.isRefreshing == true || store.claudeConnection?.isRecovering == true) && store.claudeConnection?.requiresUserAction != true ? 36 : 0)
     }
-    static func overhead(store: IslandStore) -> CGFloat { cardHeight(store: store) + 84 }
+    static func overhead(store: IslandStore) -> CGFloat {
+        cardHeight(store: store) + (store.quotaProviderIDs.isEmpty ? 0 : 10)
+            + (store.sessionProviderIDs.isEmpty ? 0 : 30) + 44
+    }
     static func layoutConfig(store: IslandStore, notch: NotchMetrics) -> IslandLayoutConfig {
         var config = store.layoutConfig(notch: notch)
+        if store.quotaProviderIDs.isEmpty || store.sessionProviderIDs.isEmpty { config.expandedMinHeight = 0 }
         let hasDetail = store.displaySessions.contains { store.expandedSessionIDs.contains($0.id) }
         let minimumRow = SessionListLayout.rowHeight + (hasDetail ? SessionListLayout.detailHeight : 0)
         // Extra quota windows and recovery notices must still leave room for one complete row.
@@ -29,11 +35,12 @@ struct ExpandedView: View {
         return config
     }
     static func contentHeight(store: IslandStore, notch: NotchMetrics) -> CGFloat {
+        if store.visibleProviderIDs.isEmpty { return notch.notchRect.height + 112 }
         let heights = store.sessionColumns(count: store.sessionLayout(notch: notch).columns).map {
             SessionListLayout.rowHeights(sessions: $0, expandedIDs: store.expandedSessionIDs)
         }
         return min(layoutConfig(store: store, notch: notch).expandedMaxHeight, notch.notchRect.height + overhead(store: store)
-                   + max(44, heights.map { $0.prefix(4).reduce(0, +) }.max() ?? 0))
+                   + (store.sessionProviderIDs.isEmpty ? 0 : max(44, heights.map { $0.prefix(4).reduce(0, +) }.max() ?? 0)))
     }
     private var sessionColumns: [[AgentSession]] { store.sessionColumns(count: columns) }
     private var columnRowHeights: [[CGFloat]] {
@@ -46,46 +53,61 @@ struct ExpandedView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: columns == 2 ? SessionListLayout.columnSpacing : 12) {
-                ForEach(ProviderRegistry.orderedIDs, id: \.self) { agent in
-                    QuotaCard(agent: agent, snapshot: store.quotas[agent], health: store.health[agent], now: now, connection: agent == .claude ? store.claudeConnection : nil, openSetup: openClaudeSetup, diagnostic: store.quotaDiagnostics[agent],
-                              height: Self.cardHeight(store: store), warning: store.warningThreshold, critical: store.criticalThreshold,
-                              displayMode: store.quotaDisplayMode,
-                              retry: { retry(agent) }, copyLogin: { copyLogin(agent) })
-                }
-            }.padding(.top, 10)
-            sessionHeader
-                .font(Theme.font(10, weight: .medium)).frame(height: 16).padding(.top, 10).padding(.bottom, 4)
-            if store.sessions.isEmpty && columns == 1 {
-                HStack(spacing: 7) {
-                    Image(systemName: "moon.zzz").font(.system(size: 13))
-                    Text(store.sessionsLoaded ? (store.sessionWarnings.values.sorted().first ?? "暂无活跃会话") : "正在读取…").font(Theme.font(11))
-                }.foregroundStyle(Theme.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if documentHeight <= availableRowsHeight || !animated {
-                sessionRows
-                    .frame(height: viewportHeight, alignment: .top).clipped()
-                    .coordinateSpace(name: Self.sessionViewportSpace)
-                    .frame(height: availableRowsHeight, alignment: .top)
+            if store.visibleProviderIDs.isEmpty {
+                VStack(spacing: 12) {
+                    Text("未检测到 Claude Code 或 Codex，可在设置中开启数据源")
+                        .font(Theme.font(11)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+                    Button("打开设置", action: settings).buttonStyle(.bordered)
+                        .islandInteraction(.control("open-settings"))
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView { sessionRows }.scrollIndicators(.hidden)
-                    .coordinateSpace(name: Self.sessionViewportSpace).islandScrollViewport()
-                    .frame(height: viewportHeight).frame(height: availableRowsHeight, alignment: .top)
-            }
-            HStack(spacing: 7) {
-                Text(store.lastRefresh.map { "更新于 " + DisplayTime.clock($0) } ?? "加载中…")
-                    .font(Theme.font(9)).foregroundStyle(Theme.tertiary)
-                ForEach(ProviderRegistry.orderedIDs, id: \.self) { agent in
-                    Circle().fill(healthColor(agent)).frame(width: 5, height: 5).help(healthHelp(agent))
+                if !store.quotaProviderIDs.isEmpty {
+                    HStack(spacing: columns == 2 ? SessionListLayout.columnSpacing : 12) {
+                        ForEach(store.quotaProviderIDs, id: \.self) { agent in
+                            QuotaCard(agent: agent, snapshot: store.quotas[agent], health: store.health[agent], now: now, connection: agent == .claude ? store.claudeConnection : nil,
+                                      credentialsPresent: agent == .claude && store.providerDetection.installed[.claude] == true ? store.providerDetection.claudeCredentialsPresent : nil,
+                                      openSetup: openClaudeSetup, diagnostic: store.quotaDiagnostics[agent],
+                                      height: Self.cardHeight(store: store), warning: store.warningThreshold, critical: store.criticalThreshold,
+                                      displayMode: store.quotaDisplayMode,
+                                      retry: { retry(agent) }, copyLogin: { copyLogin(agent) })
+                        }
+                    }.padding(.top, 10)
                 }
-                Spacer()
-                Button(action: refresh) {
-                    if store.isRefreshing && animated && animationsVisible {
-                        LayerAnimationView(kind: .refresh, color: Theme.secondary, running: true).frame(width: 24, height: 24)
-                    } else { Image(systemName: "arrow.clockwise").frame(width: 24, height: 24) }
-                }.disabled(store.isRefreshing).help("刷新").islandInteraction(.control("refresh"))
-                Button(action: settings) { Image(systemName: "gearshape").frame(width: 24, height: 24) }.help("设置").islandInteraction(.control("settings"))
-            }.font(.system(size: 11)).foregroundStyle(Theme.secondary).buttonStyle(.plain)
-                .frame(height: 24).padding(.top, 8)
+                if !store.sessionProviderIDs.isEmpty {
+                    sessionHeader
+                        .font(Theme.font(10, weight: .medium)).frame(height: 16).padding(.top, 10).padding(.bottom, 4)
+                    if store.displaySessions.isEmpty && columns == 1 {
+                        HStack(spacing: 7) {
+                            Image(systemName: "moon.zzz").font(.system(size: 13))
+                            Text(store.sessionsLoaded ? (store.sessionWarnings.values.sorted().first ?? "暂无活跃会话") : "正在读取…").font(Theme.font(11))
+                        }.foregroundStyle(Theme.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if documentHeight <= availableRowsHeight || !animated {
+                        sessionRows
+                            .frame(height: viewportHeight, alignment: .top).clipped()
+                            .coordinateSpace(name: Self.sessionViewportSpace)
+                            .frame(height: availableRowsHeight, alignment: .top)
+                    } else {
+                        ScrollView { sessionRows }.scrollIndicators(.hidden)
+                            .coordinateSpace(name: Self.sessionViewportSpace).islandScrollViewport()
+                            .frame(height: viewportHeight).frame(height: availableRowsHeight, alignment: .top)
+                    }
+                }
+                HStack(spacing: 7) {
+                    Text(store.lastRefresh.map { "更新于 " + DisplayTime.clock($0) } ?? "加载中…")
+                        .font(Theme.font(9)).foregroundStyle(Theme.tertiary)
+                    ForEach(store.quotaProviderIDs, id: \.self) { agent in
+                        Circle().fill(healthColor(agent)).frame(width: 5, height: 5).help(healthHelp(agent))
+                    }
+                    Spacer()
+                    Button(action: refresh) {
+                        if store.isRefreshing && animated && animationsVisible {
+                            LayerAnimationView(kind: .refresh, color: Theme.secondary, running: true).frame(width: 24, height: 24)
+                        } else { Image(systemName: "arrow.clockwise").frame(width: 24, height: 24) }
+                    }.disabled(store.isRefreshing).help("刷新").islandInteraction(.control("refresh"))
+                    Button(action: settings) { Image(systemName: "gearshape").frame(width: 24, height: 24) }.help("设置").islandInteraction(.control("settings"))
+                }.font(.system(size: 11)).foregroundStyle(Theme.secondary).buttonStyle(.plain)
+                    .frame(height: 24).padding(.top, 8)
+            }
         }.padding(.horizontal, IslandLayout.expandedContentInset).padding(.bottom, 12).frame(height: availableHeight)
     }
     private static let sessionViewportSpace = "sessionViewport"
@@ -94,7 +116,7 @@ struct ExpandedView: View {
         ZStack(alignment: .trailing) {
             if columns == 2 {
                 HStack(spacing: SessionListLayout.columnSpacing) {
-                    ForEach(Array(zip(ProviderRegistry.orderedIDs, sessionColumns)), id: \.0) { agent, sessions in
+                    ForEach(Array(zip(store.sessionProviderIDs, sessionColumns)), id: \.0) { agent, sessions in
                         HStack(spacing: 5) {
                             Text(ProviderRegistry.descriptor(for: agent).displayName).foregroundStyle(Theme.secondary)
                             Text("· \(sessions.filter { $0.phase != .ended }.count)").foregroundStyle(Theme.tertiary)
@@ -103,8 +125,8 @@ struct ExpandedView: View {
                 }
             } else {
                 HStack(spacing: 5) {
-                    Text("会话").foregroundStyle(Theme.secondary)
-                    Text("· \(store.sessions.filter { $0.phase != .ended }.count) 个活跃").foregroundStyle(Theme.tertiary)
+                    Text(store.sessionProviderIDs.count == 1 ? ProviderRegistry.descriptor(for: store.sessionProviderIDs[0]).displayName : "会话").foregroundStyle(Theme.secondary)
+                    Text("· \(store.displaySessions.filter { $0.phase != .ended }.count) 个活跃").foregroundStyle(Theme.tertiary)
                     Spacer()
                 }
             }
@@ -145,7 +167,7 @@ struct ExpandedView: View {
             let lastBottom = visibleRows.last.map { bottoms[$0] } ?? 0
             VStack(spacing: 0) {
                 if sessions.isEmpty {
-                    Text(Self.emptySessionLabel(column: index))
+                    Text(Self.emptySessionLabel(column: index, providers: store.sessionProviderIDs))
                         .font(Theme.font(11)).foregroundStyle(Theme.tertiary)
                         .frame(maxWidth: .infinity, alignment: .leading).frame(height: SessionListLayout.rowHeight)
                 } else {

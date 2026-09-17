@@ -7,6 +7,10 @@ public actor ClaudeSessionProvider: SessionProviding {
     private let refreshProject: String
     private let liveness: any ProcessLiveness
     private let clock: @Sendable () -> Date
+    private let modelPreferences: (any ClaudeModelPersisting)?
+    private var lastObservedModel: String?
+    private var modelLoaded = false
+    private var modelBootstrapAttempted = false
     private var warning: String?
     public func diagnosticMessage() async -> String? { warning }
     private var activeWindow: TimeInterval = 1800
@@ -37,8 +41,9 @@ public actor ClaudeSessionProvider: SessionProviding {
     }
 
     public init(paths: SessionPaths = SessionPaths(), liveness: any ProcessLiveness = SystemProcessLiveness(),
-                clock: @escaping @Sendable () -> Date = { Date() }) {
+                clock: @escaping @Sendable () -> Date = { Date() }, modelPreferences: (any ClaudeModelPersisting)? = nil) {
         self.paths = paths; self.liveness = liveness; self.clock = clock
+        self.modelPreferences = modelPreferences
         refreshDirectory = physicalURL(ClaudeRefreshDirectory.url(home: paths.home))
         refreshProject = refreshDirectory.path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? String($0) : "-" }.joined()
     }
@@ -52,6 +57,12 @@ public actor ClaudeSessionProvider: SessionProviding {
     public func setActiveWindow(_ seconds: TimeInterval) { activeWindow = seconds }
     public func currentSessions() async -> [AgentSession] { await currentSessions(now: clock()) }
     public func parsedBytesLastScan() -> Int { diagnostics.parsedBytes }
+    public func latestObservedModel() async -> String? { lastObservedModel }
+    private func observeModel(_ model: String?) async {
+        guard let model = nonempty(model)?.trimmingCharacters(in: .whitespacesAndNewlines), model != lastObservedModel else { return }
+        lastObservedModel = model
+        await modelPreferences?.saveModel(model)
+    }
     public func currentSessions(now: Date) async -> [AgentSession] {
         await currentSessions(now: now, changedPaths: nil)
     }
@@ -104,6 +115,12 @@ public actor ClaudeSessionProvider: SessionProviding {
     }
 
     private func scan(now: Date, changedPaths: Set<String>?) async -> [AgentSession] {
+        // Loading is serialized with scans, so an overlapping getter cannot overwrite
+        // a newly parsed model with an earlier asynchronous preference read.
+        if !modelLoaded {
+            lastObservedModel = nonempty(await modelPreferences?.loadModel())
+            modelLoaded = true
+        }
         warning = nil
         let start = ContinuousClock.now
         var report = ClaudeSessionDiagnostics()
@@ -172,6 +189,7 @@ public actor ClaudeSessionProvider: SessionProviding {
         }.prefix(50))
         if eligible.count > 50 { warning = "Claude 仅显示最近 50 个会话" }
         var sessions: [AgentSession] = []
+        var observed: (model: String, modified: Date)?
         for id in candidates.sorted() {
             if Task.isCancelled { break }
             if let message = logs[id]?.warning { warning = message }
@@ -188,6 +206,7 @@ public actor ClaudeSessionProvider: SessionProviding {
             if let file = discovered[id] {
                 var log = logs[id] ?? SessionLog(url: file)
                 if log.tailer.url != file { log = SessionLog(url: file) }
+                log.state.modelWasObserved = false
                 if sessionPathAffected(file, by: changes) || logs[id] == nil || log.tailer.url != logs[id]?.tailer.url {
                     report.parsedBytes += await log.read(url: file)
                 }
@@ -196,7 +215,31 @@ public actor ClaudeSessionProvider: SessionProviding {
                 logs[id] = log
             }
             if ClaudeRefreshDirectory.contains(state.cwd, directory: refreshDirectory) { continue }
+            if state.modelWasObserved, let model = state.model,
+               observed == nil || modified > (observed?.modified ?? .distantPast) {
+                observed = (model, modified)
+            }
             sessions.append(state.session(id: id, process: process, alive: alive.contains(id), desktopTitle: metadata[id]?.title, modified: modified, now: now))
+        }
+        await observeModel(observed?.model)
+        if lastObservedModel == nil, !modelBootstrapAttempted, !Task.isCancelled {
+            modelBootstrapAttempted = true
+            // Discovery above only lists/stats files. Bootstrap reads one bounded tail, even
+            // when that transcript is older than the active window or contains no model.
+            let latest = discovered.keys.filter {
+                !excludedIDs.contains($0) && now.timeIntervalSince(fileStamps[$0]?.modified ?? .distantPast) <= 30 * 86400
+            }.sorted {
+                let lhs = fileStamps[$0]?.modified ?? .distantPast
+                let rhs = fileStamps[$1]?.modified ?? .distantPast
+                return lhs == rhs ? $0 < $1 : lhs > rhs
+            }.first
+            if let id = latest, let file = discovered[id] {
+                var log = logs[id] ?? SessionLog<ClaudeTranscript>(url: file)
+                report.parsedBytes += await log.read(url: file)
+                if !ClaudeRefreshDirectory.contains(log.state.cwd, directory: refreshDirectory) {
+                    await observeModel(log.state.model)
+                }
+            }
         }
         logs = logs.filter { candidates.contains($0.key) }
         sessionCache = Dictionary(uniqueKeysWithValues: sessions.map { ($0.sessionId, $0) })

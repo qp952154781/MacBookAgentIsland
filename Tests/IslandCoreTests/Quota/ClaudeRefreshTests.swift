@@ -71,7 +71,7 @@ actor FakeClaudeRefresher: ClaudeRefreshing {
 @Test func refreshAbandonsEverySetupRuleWithoutInput() async throws {
     for rule in ClaudeTerminalParser.setupRules {
         let pty = FakeClaudePTY("\u{1b}[32m" + rule + "\u{1b}[0m\n❯ ")
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, directory: URL(fileURLWithPath: "/fixture"), timeout: 6)
         if case .needsUserSetup = await refresher.refresh() {} else { Issue.record("Setup must abort: \(rule)") }
         try await eventually { await pty.finished }
@@ -83,7 +83,7 @@ actor FakeClaudeRefresher: ClaudeRefreshing {
 @Test func refreshNormalPromptRenewsAndCleansUp() async {
     let future = Date().addingTimeInterval(28_800)
     let pty = FakeClaudePTY("\u{1b}]0;Claude\u{7}\u{1b}[32m" + handwrittenClaudePrompt + "\u{1b}[0m")
-    let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([Date(timeIntervalSince1970: 0), future]), makePTY: { pty },
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([Date(timeIntervalSince1970: 0), future]), makePTY: { pty },
         locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 8)
     #expect(await refresher.refresh() == .refreshed(future))
     #expect(await pty.messages == ["/usage\r", "\u{1b}", "/exit\r"])
@@ -94,7 +94,7 @@ actor FakeClaudeRefresher: ClaudeRefreshing {
 @Test func refreshTimeoutCancellationWriteFailureAndLoginCleanUp() async throws {
     for mode in ["timeout", "cancel", "write", "login"] {
         let pty = FakeClaudePTY(mode == "write" ? handwrittenClaudePrompt : mode == "login" ? "OAuth session expired and could not be refreshed" : "", sendFailure: mode == "write")
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: mode == "timeout" ? 5.05 : 6)
         let task = Task { await refresher.refresh() }
         if mode == "cancel" { try await eventually { await pty.starts == 1 }; task.cancel() }
@@ -109,7 +109,7 @@ actor FakeClaudeRefresher: ClaudeRefreshing {
 
 @Test func refreshSetupAfterUsageIsIgnoredAndClosesPanelBeforeExit() async throws {
     let pty = FakeClaudePTY()
-    let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
         locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 8)
     let task = Task { await refresher.refresh() }
     try await eventually { await pty.messages.count == 1 }
@@ -129,7 +129,7 @@ actor FakeClaudeRefresher: ClaudeRefreshing {
 
 @Test func refreshSingleFlight() async throws {
     let pty = FakeClaudePTY("")
-    let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
         locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 6)
     async let first = refresher.refresh()
     try await eventually { await pty.starts == 1 }
@@ -152,7 +152,7 @@ func refreshCredential(expiry: Double) -> Data {
             .success(.init(stdout: refreshCredential(expiry: fresh.timeIntervalSince1970), exitCode: 0))])
         let refresher = FakeClaudeRefresher([.refreshed(fresh)])
         let http = FakeUsageHTTP((unauthorized ? [.success(.init(statusCode: 401))] : []) + [.success(.init(statusCode: 200, data: try quotaFixture("claude-full.json")))])
-        let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
+        let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
             http: http, now: { clock.now() }, refresher: refresher)
         _ = try await client.fetchQuota()
         #expect(await refresher.calls == [unauthorized])
@@ -168,7 +168,7 @@ func refreshCredential(expiry: Double) -> Data {
         #expect(interval == 436)
         let executor = FakeQuotaExecutor(Array(repeating: .success(.init(stdout: try quotaFixture("credentials.json"), exitCode: 0)), count: 2))
         let http = FakeUsageHTTP([.success(.init(statusCode: 429, retryAfter: header)), .success(.init(statusCode: 200, data: try quotaFixture("claude-full.json")))])
-        let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
+        let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
             http: http, now: { clock.now() }, refresher: FakeClaudeRefresher())
         _ = try? await client.fetchQuota()
         await client.retryConnection()
@@ -188,7 +188,7 @@ func refreshCredential(expiry: Double) -> Data {
         let clock = FakeQuotaClock()
         let executor = FakeQuotaExecutor(Array(repeating: .success(.init(stdout: refreshCredential(expiry: 0), exitCode: 0)), count: 12))
         let refresher = FakeClaudeRefresher([result])
-        let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
+        let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
             http: FakeUsageHTTP([]), now: { clock.now() }, refresher: refresher)
         _ = try? await client.fetchQuota()
         if case .failed = result {
@@ -216,7 +216,7 @@ func refreshCredential(expiry: Double) -> Data {
     let http = FakeUsageHTTP([.success(.init(statusCode: 200, data: try quotaFixture("claude-full.json"))),
         .success(.init(statusCode: 401)), .success(.init(statusCode: 401)),
         .success(.init(statusCode: 200, data: try quotaFixture("claude-full.json")))])
-    let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
         http: http, now: { clock.now() }, refresher: refresher)
     _ = try await client.fetchQuota()
     clock.advance(1799)
@@ -229,14 +229,14 @@ func refreshCredential(expiry: Double) -> Data {
     for missing in [false, true] {
         let executor = FakeQuotaExecutor([missing ? .success(.init(stdout: Data(), exitCode: 44)) : zero, valid])
         let refresher = FakeClaudeRefresher([.needsUserSetup("fixture")])
-        let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
+        let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: executor, now: { clock.now() }, readFallback: { nil }),
             http: FakeUsageHTTP([.success(.init(statusCode: 200, data: try quotaFixture("claude-full.json")))]),
             now: { clock.now() }, refresher: refresher)
         _ = try? await client.fetchQuota()
         #expect(await client.status().requiresUserAction)
         _ = try await client.fetchQuota()
         #expect(await !client.status().requiresUserAction)
-        #expect(await refresher.calls.count == 1)
+        #expect(await refresher.calls.count == (missing ? 0 : 1))
     }
 }
 
@@ -272,7 +272,7 @@ private actor RefreshStatusProvider: ClaudeConnectionProviding {
 
 @Test func incompleteMenuPromptIsNeverTreatedAsInput() async throws {
     let pty = FakeClaudePTY("❯")
-    let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
         locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 6)
     let task = Task { await refresher.refresh() }
     try await eventually { await pty.starts == 1 }
@@ -284,7 +284,7 @@ private actor RefreshStatusProvider: ClaudeConnectionProviding {
 @Test func alreadyFreshAndMissingExecutableDoNotStartPTY() async {
     for fresh in [false, true] {
         let pty = FakeClaudePTY()
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([fresh ? Date().addingTimeInterval(7200) : .distantPast]),
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([fresh ? Date().addingTimeInterval(7200) : .distantPast]),
             makePTY: { pty }, locate: { nil })
         let result = await refresher.refresh()
         if fresh { #expect(result == .alreadyFresh) }
@@ -296,7 +296,7 @@ private actor RefreshStatusProvider: ClaudeConnectionProviding {
 
 @Test func refreshSetupDuringSettlingRevokesInputBeforeUsage() async throws {
     let pty = FakeClaudePTY()
-    let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
         locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 8)
     let task = Task { await refresher.refresh() }
     try await eventually { await pty.starts == 1 }
@@ -310,7 +310,7 @@ private actor RefreshStatusProvider: ClaudeConnectionProviding {
 
 @Test func refreshErasedPromptCannotUseStaleReadiness() async throws {
     let pty = FakeClaudePTY(handwrittenClaudePrompt + "\u{1b}[2J\u{1b}[HUnknown screen")
-    let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
         locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 5.5)
     if case .failed = await refresher.refresh() {} else { Issue.record("Expected timeout") }
     #expect(await pty.messages.isEmpty)

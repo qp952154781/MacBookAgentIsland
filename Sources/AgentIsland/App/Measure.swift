@@ -98,8 +98,8 @@ import IslandCore
             "states": states.mapValues(\.json), "steadyStatesAfter5Seconds": steady.mapValues(\.json),
             "uiRedrawDefinition": "NSHostingView.draw calls; root body evaluations and native layer rebuilds reported separately. Compositor keyframes are not CPU redraws and are capped at 10 Hz per layer.",
             "stateSampling": "1 second; intervals spanning a working-state change are reported as transition; unobserved states have null averages",
-            "quotaRefreshCounts": Dictionary(uniqueKeysWithValues: ProviderRegistry.orderedIDs.map { ($0.rawValue, quotaCounts[$0, default: 0]) }),
-            "sessionRefreshCounts": Dictionary(uniqueKeysWithValues: ProviderRegistry.orderedIDs.map { ($0.rawValue, sessionCounts[$0, default: 0]) })
+            "quotaRefreshCounts": Dictionary(uniqueKeysWithValues: store.providerStates.map(\.id).map { ($0.rawValue, quotaCounts[$0, default: 0]) }),
+            "sessionRefreshCounts": Dictionary(uniqueKeysWithValues: store.providerStates.map(\.id).map { ($0.rawValue, sessionCounts[$0, default: 0]) })
         ]
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
             FileHandle.standardOutput.write(data + Data("\n".utf8))

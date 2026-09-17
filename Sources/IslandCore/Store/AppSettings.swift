@@ -10,6 +10,8 @@ import Foundation
 extension UserDefaults: AppSettingsDefaults {}
 
 @MainActor @Observable public final class AppSettings {
+    public var providerOverrides: [ProviderID: Bool] { didSet { persist() } }
+    public func setProviderOverride(_ value: Bool?, for id: ProviderID) { providerOverrides[id] = value }
     public var showGPU: Bool { didSet { persist() } }
     public var showCPU: Bool { didSet { persist() } }
     public var showNetwork: Bool { didSet { persist() } }
@@ -35,6 +37,8 @@ extension UserDefaults: AppSettingsDefaults {}
     /// Nil defaults keeps snapshot and fixture settings entirely in memory.
     public init(defaults: (any AppSettingsDefaults)? = nil) {
         self.defaults = defaults
+        let saved = defaults?.object(forKey: "providerOverrides") as? [String: Bool] ?? [:]
+        providerOverrides = Dictionary(uniqueKeysWithValues: saved.map { (ProviderID(rawValue: $0.key), $0.value) })
         sessionListLayout = defaults?.string(forKey: "sessionListLayout").flatMap(SessionListLayoutMode.init(rawValue:)) ?? .automatic
         expansionMethod = defaults?.string(forKey: "expansionMethod").flatMap(ExpansionMethod.init(rawValue:)) ?? .hover
         quotaDisplayMode = defaults?.string(forKey: "quotaDisplayMode").flatMap(QuotaDisplayMode.init(rawValue:)) ?? .remaining
@@ -66,10 +70,12 @@ extension UserDefaults: AppSettingsDefaults {}
             "showInFullscreen": showInFullscreen, "launchAtLogin": launchAtLogin, "activeMinutes": activeMinutes,
             "expansionMethod": expansionMethod.rawValue, "quotaDisplayMode": quotaDisplayMode.rawValue,
             "sessionListLayout": sessionListLayout.rawValue]
+        defaults?.set(Dictionary(uniqueKeysWithValues: providerOverrides.map { ($0.key.rawValue, $0.value) }), forKey: "providerOverrides")
         for (key, value) in values { defaults?.set(value, forKey: key) }
         onChange?()
     }
     public func apply(to store: IslandStore) {
+        store.providerOverrides = providerOverrides
         store.systemMetricOptions = systemMetricOptions
         store.sessionListLayout = sessionListLayout
         store.quotaDisplayMode = quotaDisplayMode

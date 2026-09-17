@@ -123,7 +123,7 @@ import IslandCore
         visibilityTask = Task {
             await previous?.value
             guard !Task.isCancelled else { return }
-            if retryClaude { await store.retryClaudeConnection() }
+            if retryClaude { await store.detectProviders(); await store.retryClaudeConnection() }
             await store.setVisible(!suspended)
         }
     }

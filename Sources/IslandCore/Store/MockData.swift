@@ -1,6 +1,9 @@
 import Foundation
 
-public enum MockScenario: String, Sendable, CaseIterable { case busy, idle, critical, disconnected }
+public enum MockScenario: String, Sendable, CaseIterable {
+    case busy, idle, critical, disconnected
+    case noCredentials = "no-credentials"
+}
 
 extension IslandStore {
     public static func mock(_ scenario: MockScenario, now: Date = Date()) -> IslandStore {
@@ -39,7 +42,9 @@ extension IslandStore {
             ]
 
         }
-        if scenario == .disconnected {
+        if scenario == .disconnected || scenario == .noCredentials {
+            // Disconnected models a recoverable connection, not a missing account.
+            store.providerDetection.claudeCredentialsPresent = scenario == .disconnected
             store.quotas[.claude] = nil
             store.health[.claude] = .needsSetup(message: "在终端运行一次 claude auth login")
         }

@@ -65,6 +65,9 @@ import IslandCore
             ("collapsed-brand-fallback", .busy, .active, true),
             ("expanded-brand-fallback", .busy, .expanded, true),
             ("expanded-critical", .critical, .expanded, true), ("expanded-disconnected", .disconnected, .expanded, true),
+            ("no-notch-disconnected", .disconnected, .expanded, false),
+            ("expanded-no-credentials", .noCredentials, .expanded, true),
+            ("no-notch-no-credentials", .noCredentials, .expanded, false),
             ("expanded-idle", .idle, .expanded, true),
             ("expanded-used", .idle, .expanded, true), ("expanded-fallback", .idle, .expanded, true),
             ("expanded-expired", .idle, .expanded, true), ("expanded-full", .idle, .expanded, true),
@@ -95,6 +98,13 @@ import IslandCore
                 cases.append(("sessions-agents-" + scenario + (hasNotch ? "" : "-no-notch"), .idle, .expanded, hasNotch))
             }
         }
+        for hasNotch in [true, false] {
+            for scenario in providerScenarios {
+                for mode in [IslandMode.collapsed, .active, .expanded] {
+                    cases.append(("providers-\(scenario)-\(hasNotch ? "notch" : "capsule")-\(mode.rawValue)", .busy, mode, hasNotch))
+                }
+            }
+        }
         var files: [String: Data] = [:]
         for (name, scenario, mode, hasNotch) in cases {
             let store = IslandStore.mock(scenario, now: now)
@@ -109,6 +119,11 @@ import IslandCore
                 store.systemMetrics.memory = .init(usedBytes: UInt64(percent), totalBytes: 100)
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: percent == 9 ? 0 : 2500,
                                                            minRPM: 0, maxRPM: 6550)])
+            }
+            if name.hasPrefix("providers-") {
+                if let scenario = providerScenarios.sorted(by: { $0.count > $1.count }).first(where: { name.hasPrefix("providers-" + $0 + "-") }) {
+                    configureProviders(store, scenario: scenario)
+                }
             }
             switch name {
             case "expanded-system-cpu-warning", "no-notch-system-cpu-warning":
@@ -268,14 +283,12 @@ import IslandCore
         for method in ExpansionMethod.allCases {
             let settings = AppSettings()
             settings.expansionMethod = method
-            let renderer = ImageRenderer(content: SettingsView(settings: settings, store: IslandStore.mock(.idle, now: now),
-                                                                 connection: ConnectionActions(), snapshot: true, snapshotDate: now))
-            renderer.scale = 2
-            guard let image = renderer.cgImage,
-                  let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
-                throw ExportError.renderFailed("settings")
+            let store = IslandStore.mock(.idle, now: now)
+            files[method == .hover ? "settings.png" : "settings-click.png"] = try renderSettings(
+                settings, store: store, glyphs: officialGlyphs)
+            if method == .hover {
+                files["settings-dark.png"] = try renderSettings(settings, store: store, glyphs: officialGlyphs, colorScheme: .dark)
             }
-            files[method == .hover ? "settings.png" : "settings-click.png"] = data
         }
         for setup in [false, true] {
             let store = IslandStore.mock(.idle, now: now)
@@ -285,11 +298,19 @@ import IslandCore
             status.requiresUserAction = setup
             status.result = setup ? .needsUserSetup("需要在终端完成一次 Claude Code 首次设置") : .refreshed(status.expiresAt ?? now)
             store.claudeConnection = status
-            let renderer = ImageRenderer(content: SettingsView(settings: AppSettings(), store: store, connection: ConnectionActions(), snapshot: true, snapshotDate: now))
-            renderer.scale = 2
-            guard let image = renderer.cgImage,
-                  let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { throw ExportError.renderFailed("settings-claude") }
-            files[setup ? "settings-claude-setup.png" : "settings-claude-refreshed.png"] = data
+            files[setup ? "settings-claude-setup.png" : "settings-claude-refreshed.png"] = try renderSettings(
+                AppSettings(), store: store, glyphs: officialGlyphs)
+        }
+        for scenario in ["claude", "system", "third-party", "both", "codex-disabled"] {
+            let store = IslandStore.mock(.busy, now: now)
+            configureProviders(store, scenario: scenario == "codex-disabled" ? "claude" : scenario)
+            let settings = AppSettings()
+            settings.providerOverrides = store.providerOverrides
+            files["settings-providers-" + scenario + ".png"] = try renderSettings(settings, store: store, glyphs: officialGlyphs)
+            if scenario == "codex-disabled" {
+                files["settings-providers-codex-disabled-dark.png"] = try renderSettings(
+                    settings, store: store, glyphs: officialGlyphs, colorScheme: .dark)
+            }
         }
         // Audit mode has no window. Disk writes run off the UI executor after all rendering completes.
         let renderedFiles = files
@@ -299,6 +320,55 @@ import IslandCore
             for (name, data) in renderedFiles { try data.write(to: url.appendingPathComponent(name), options: .atomic) }
         }
         print("已生成 \(files.count) 张快照：\(directory)")
+    }
+
+    private static func renderSettings(_ settings: AppSettings, store: IslandStore, glyphs: BrandGlyphLoader,
+                                       colorScheme: ColorScheme = .light) throws -> Data {
+        guard let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua) else {
+            throw ExportError.renderFailed("settings-appearance")
+        }
+        var data: Data?
+        // Match both SwiftUI's environment and AppKit's dynamic window/background colors.
+        // Use the island's already loaded glyphs rather than an unrefreshed shared loader.
+        appearance.performAsCurrentDrawingAppearance {
+            let renderer = ImageRenderer(content: SettingsView(settings: settings, store: store,
+                connection: ConnectionActions(), snapshot: true, snapshotDate: now)
+                .environment(\.brandGlyphLoader, glyphs)
+                .environment(\.colorScheme, colorScheme))
+            renderer.scale = 2
+            if let image = renderer.cgImage {
+                data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+            }
+        }
+        guard let data else { throw ExportError.renderFailed("settings") }
+        return data
+    }
+
+    static let providerScenarios = ["claude", "codex", "system", "third-party", "both", "claude-unconnected", "claude-narrow"]
+
+    /// Synthetic availability/backend evidence keeps audits independent of host accounts.
+    static func configureProviders(_ store: IslandStore, scenario: String) {
+        store.providerDetection = ProviderDetection(installed: [.claude: true, .codex: true], claudeCredentialsPresent: true)
+        switch scenario {
+        case "claude", "claude-narrow", "claude-unconnected":
+            store.providerOverrides = [.codex: false]
+            if scenario == "claude-narrow" { store.wingWidth = 60 }
+            if scenario == "claude-unconnected" {
+                store.providerDetection = ProviderDetection(installed: [:], claudeCredentialsPresent: false)
+                store.providerOverrides[.claude] = true
+                store.quotas[.claude] = nil
+                store.health[.claude] = .needsSetup(message: ClaudeCredentialStore.loginMessage)
+            }
+        case "codex":
+            store.providerOverrides = [.claude: false]
+            store.quotas[.codex]?.windows.removeAll { $0.kind != .weekly }
+        case "system": store.providerOverrides = [.claude: false, .codex: false]
+        case "third-party":
+            store.providerOverrides = [.codex: false]
+            store.providerDetection.claudeCredentialsPresent = false
+            store.latestClaudeModel = "glm-fixture"
+        default: store.providerOverrides = [:]
+        }
     }
 
     static func metrics(hasNotch: Bool) -> NotchMetrics {

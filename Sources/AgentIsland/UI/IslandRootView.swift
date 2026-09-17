@@ -23,8 +23,8 @@ struct IslandRootView: View {
                                earRadius: notch.hasNotch ? config.earRadius : 0)
         VStack(spacing: 0) {
             ZStack {
-                if mode == .expanded && store.systemMetricOptions.enabled {
-                    SystemStatusView(metrics: store.systemMetrics, options: store.systemMetricOptions,
+                if mode == .expanded && store.expandedMetricOptions.enabled {
+                    SystemStatusView(metrics: store.systemMetrics, options: store.expandedMetricOptions,
                                      notch: notch, config: config).transition(.opacity)
                 } else {
                     CollapsedView(store: store, notch: notch, active: mode == .active,
@@ -32,7 +32,7 @@ struct IslandRootView: View {
                 }
             }
             .animation(animated && animationsVisible ? .easeInOut(duration: 0.2) : nil,
-                       value: mode == .expanded && store.systemMetricOptions.enabled)
+                       value: mode == .expanded && store.expandedMetricOptions.enabled)
             if mode == .expanded {
                 ExpandedView(store: store, now: now, availableHeight: size.height - notch.notchRect.height,
                              columns: store.sessionLayout(notch: notch).columns,

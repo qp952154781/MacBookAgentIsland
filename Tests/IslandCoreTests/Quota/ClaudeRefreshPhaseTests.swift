@@ -26,7 +26,7 @@ struct ClaudeRefreshPhaseTests {
         let fresh = clock.now().addingTimeInterval(28_800)
         let reader = FakeClaudeExpiry(initiallyValid ? [fresh] : [.distantPast, .distantPast, nil, fresh])
         let pty = FakeClaudePTY(chunks: chunks(startup, size: size), afterUsage: chunks(usage, size: size))
-        let refresher = ClaudeCLIRefresher(expiryReader: reader, makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: reader, makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 15, clock: clock)
         let task = Task { await refresher.refresh(force: true) }
         let polls = initiallyValid ? 1 : 3
@@ -47,7 +47,7 @@ struct ClaudeRefreshPhaseTests {
         // Handwritten login failure is appended after the supplied usage panel.
         let usage = try recordedPTYFixture("after-usage") + Data(("\r\n" + rule + "\u{1b}[2J").utf8)
         let pty = FakeClaudePTY(chunks: [Data(handwrittenClaudePrompt.utf8)], afterUsage: chunks(usage, size: size))
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, timeout: 15)
         #expect(await refresher.refresh(force: true) == .needsLogin)
         #expect(await pty.messages == ["/usage\r", "\u{1b}", "/exit\r"])
@@ -61,7 +61,7 @@ struct ClaudeRefreshPhaseTests {
         let accepted = now.addingTimeInterval(302)
         let reader = FakeClaudeExpiry([now.addingTimeInterval(7200), nil, now, now.addingTimeInterval(300), accepted])
         let pty = FakeClaudePTY()
-        let refresher = ClaudeCLIRefresher(expiryReader: reader, makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: reader, makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, clock: clock)
         let task = Task { await refresher.refresh(force: true) }
         for poll in 1...4 {
@@ -79,7 +79,7 @@ struct ClaudeRefreshPhaseTests {
 
     @Test func usageHasIndependentTwentySecondDeadline() async throws {
         let clock = FakeQuotaClock(), pty = FakeClaudePTY()
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") }, clock: clock)
         let task = Task { await refresher.refresh(force: true) }
         try await eventually { clock.pending == 3 }
@@ -96,7 +96,7 @@ struct ClaudeRefreshPhaseTests {
 
     @Test func cancellationAfterUsageClosesPanelAndExits() async throws {
         let pty = FakeClaudePTY()
-        let refresher = ClaudeCLIRefresher(expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
+        let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: FakeClaudeExpiry([.distantPast]), makePTY: { pty },
             locate: { URL(fileURLWithPath: "/fixture/claude") })
         let task = Task { await refresher.refresh(force: true) }
         try await eventually { await pty.messages == ["/usage\r"] }

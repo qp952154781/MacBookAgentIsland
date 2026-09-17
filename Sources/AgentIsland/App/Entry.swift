@@ -8,11 +8,16 @@ import IslandCore
         do {
             var options = try LaunchOptions(arguments: Array(CommandLine.arguments.dropFirst()))
             options.processStarted = processStarted
+            if options.help { print(LaunchOptions.helpText); return }
             if let action = options.loginItem {
                 exit(try LoginItemCommand.run(action))
             }
             if options.dump == "claude-log" {
-                await DumpClaudeLog.run()
+                await DumpClaudeLog.run(home: options.home)
+                return
+            }
+            if options.dump == "providers" {
+                try await DumpProviders.run(home: options.home)
                 return
             }
             if options.dump == "system" {
@@ -20,11 +25,11 @@ import IslandCore
                 return
             }
             if options.dump == "sessions" {
-                try await DumpSessions.run()
+                try await DumpSessions.run(home: options.home)
                 return
             }
             if options.dump == "quota" {
-                exit(await DumpQuota.run())
+                exit(await DumpQuota.run(home: options.home))
             }
             if options.dump != nil {
                 print("{\"error\":\"not implemented\"}")

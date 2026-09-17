@@ -25,7 +25,7 @@ private actor HealingEnvironment: QuotaCommandExecuting, ClaudeRefreshing {
     func changeVersion() { version = "2.0" }
     func modifyEntry() { mdat = mdat.addingTimeInterval(1) }
     func client(http: any UsageHTTPTransport, diagnostics: ClaudeDiagnostics = .disabled) -> ClaudeOAuthUsageClient {
-        ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: self, now: { self.clock.now() },
+        ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: self, now: { self.clock.now() },
             diagnostics: diagnostics, readFallback: { nil }), http: http, now: { self.clock.now() }, refresher: self,
             clock: clock, diagnostics: diagnostics, modificationDate: { await self.mdat }, cliVersion: { await self.version })
     }
@@ -103,7 +103,7 @@ private func healingHTTP(_ count: Int = 5) throws -> FakeUsageHTTP {
     let clock = FakeQuotaClock(), http = try healingHTTP()
     let environment = HealingEnvironment(clock: clock, expiry: clock.now().addingTimeInterval(600))
     let refresher = HTTPFirstRefresher(http: http)
-    let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: environment, now: { clock.now() }, readFallback: { nil }),
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: environment, now: { clock.now() }, readFallback: { nil }),
         http: http, now: { clock.now() }, refresher: refresher, clock: clock)
     _ = try await client.fetchQuota()
     #expect(await refresher.sawHTTP)
@@ -247,7 +247,7 @@ private actor HangingRefresher: ClaudeRefreshing {
 @Test func hungInjectedRefresherCannotFreezeFetchOrOverwriteReplacement() async throws {
     let clock = FakeQuotaClock(), environment = HealingEnvironment(clock: FakeQuotaClock(), expiry: .distantPast)
     let refresher = HangingRefresher()
-    let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: environment, now: { clock.now() }, readFallback: { nil }),
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: environment, now: { clock.now() }, readFallback: { nil }),
         http: try healingHTTP(), now: { clock.now() }, refresher: refresher, clock: clock)
     let task = Task { try await client.fetchQuota() }
     try await eventually { await refresher.waiting && clock.pending >= 2 }
@@ -265,7 +265,7 @@ private actor HangingRefresher: ClaudeRefreshing {
 @Test func nativeRefresherWatchdogClearsItsOwnInFlight() async throws {
     let clock = FakeQuotaClock(), reader = HangingExpiry(clock: FakeQuotaClock())
     let pty = FakeClaudePTY()
-    let refresher = ClaudeCLIRefresher(expiryReader: reader, makePTY: { pty }, locate: { nil }, clock: clock)
+    let refresher = ClaudeCLIRefresher(credentialsPresent: { true }, expiryReader: reader, makePTY: { pty }, locate: { nil }, clock: clock)
     let task = Task { await refresher.refresh() }
     try await eventually { await reader.waiting && clock.pending > 0 }
     clock.advance(60)
@@ -294,7 +294,7 @@ private actor HangingExpiry: ClaudeExpiryReading {
     let payload = Data("{\"claudeAiOauth\":{\"accessToken\":\"\(secret)\",\"refreshToken\":\"\(refresh)\",\"expiresAt\":0}}".utf8)
     let store = ClaudeCredentialStore(executor: FakeQuotaExecutor(Array(repeating: .success(.init(stdout: payload, exitCode: 0)), count: 4)),
         now: { clock.now() }, diagnostics: logger, readFallback: { nil })
-    let client = ClaudeOAuthUsageClient(credentials: store, http: FakeUsageHTTP([.failure(.transient(secret))]), now: { clock.now() },
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: store, http: FakeUsageHTTP([.failure(.transient(secret))]), now: { clock.now() },
         refresher: FakeClaudeRefresher([.failed(secret + refresh)]), clock: clock, diagnostics: logger)
     _ = try? await client.fetchQuota()
     let initial = await logger.recentLines().joined(separator: "\n")
@@ -330,7 +330,10 @@ private actor HangingExpiry: ClaudeExpiryReading {
     let updates = QuotaUpdateLog(), stream = await service.updates()
     let reader = Task { for await value in stream { await updates.append(value) } }
     await service.start()
-    try await eventually { clock.pending == 1 }
+    try await eventually {
+        let update = await updates.values.last
+        return clock.pending == 1 && update?.health == .ok
+    }
     #expect(await updates.values.last?.health == .ok)
     clock.advance(600)
     try await eventually { clock.pending == 1 && clock.sleeps.last == 120 }
@@ -366,7 +369,7 @@ private actor RecoveryDeadlineProvider: ClaudeConnectionProviding {
     let logger = ClaudeDiagnostics(directory: directory)
     let secret = "FAKE-HTTP-SECRET"
     let data = Data("{\"claudeAiOauth\":{\"accessToken\":\"\(secret)\",\"expiresAt\":2000000000000}}".utf8)
-    let client = ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(executor: FakeQuotaExecutor([
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: FakeQuotaExecutor([
         .success(.init(stdout: data, exitCode: 0))]), now: { clock.now() }, diagnostics: logger, readFallback: { nil }),
         http: FakeUsageHTTP([.success(.init(statusCode: 503, data: Data(secret.utf8))), .failure(.transient(secret))]),
         now: { clock.now() }, refresher: FakeClaudeRefresher(), clock: clock, diagnostics: logger)

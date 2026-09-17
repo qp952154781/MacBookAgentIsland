@@ -7,6 +7,7 @@ struct QuotaCard: View {
     let health: ProviderHealth?
     let now: Date
     var connection: ClaudeConnectionStatus? = nil
+    var credentialsPresent: Bool? = nil
     var openSetup: () -> Void = {}
     var diagnostic: String? = nil
     var height: CGFloat = 134
@@ -52,7 +53,7 @@ struct QuotaCard: View {
                     }.font(Theme.font(10))
                 } else if connection?.requiresUserAction == true, case .needsLogin = connection?.result {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Claude 登录已失效，请重新登录").lineLimit(2)
+                        Text(connection?.credentialsMissing == true ? "未连接 · 请在终端运行 claude auth login" : "Claude 登录已失效，请重新登录").lineLimit(2)
                         HStack {
                             Button("复制登录命令", action: copyLogin).islandInteraction(.control("login:claude"))
                             Button("重试", action: retry).islandInteraction(.control("retry:claude"))
@@ -61,12 +62,13 @@ struct QuotaCard: View {
                 } else { switch health {
                 case let .needsSetup(message):
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(agent == .claude ? ClaudeOAuthUsageClient.recoveringMessage : "未连接 · " + message).lineLimit(2)
-                        Text(agent == .claude ? "岛会自动重试连接" : "请先登录 \(ProviderRegistry.descriptor(for: agent).displayName) 后刷新").foregroundStyle(Theme.tertiary)
-                        if agent != .claude {
-                            Button("复制登录命令", action: copyLogin).islandInteraction(.control("login:" + agent.rawValue))
-                        } else {
+                        let canRecover = agent == .claude && credentialsPresent == true
+                        Text(canRecover ? ClaudeOAuthUsageClient.recoveringMessage : "未连接 · " + message).lineLimit(2)
+                        Text(canRecover ? "岛会自动重试连接" : "请先登录 \(ProviderRegistry.descriptor(for: agent).displayName) 后刷新").foregroundStyle(Theme.tertiary)
+                        if canRecover {
                             Button("重试", action: retry).islandInteraction(.control("retry:claude"))
+                        } else {
+                            Button("复制登录命令", action: copyLogin).islandInteraction(.control("login:" + agent.rawValue))
                         }
                     }.font(Theme.font(10))
                 case let .failed(message):
@@ -124,6 +126,7 @@ struct QuotaCard: View {
     }
     private var healthLabel: String {
         if connection?.isRefreshing == true || (connection?.isRecovering == true && connection?.requiresUserAction != true) { return "自动恢复中" }
+        if connection?.credentialsMissing == true { return "未连接" }
         if connection?.requiresUserAction == true { return connection?.result == .needsLogin ? "需登录" : "待设置" }
         return switch health {
         case .ok: snapshot.map { DisplayTime.duration(now.timeIntervalSince($0.fetchedAt)) } ?? "已连接"

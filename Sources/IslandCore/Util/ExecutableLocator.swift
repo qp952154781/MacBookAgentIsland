@@ -2,18 +2,22 @@ import Foundation
 
 public enum ExecutableLocator {
     public static func codexCLI(environment: [String: String] = ProcessInfo.processInfo.environment,
-                                homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) async -> URL? {
+                                homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+                                existenceOnly: Bool = false, homeOnly: Bool = false) async -> URL? {
         let home = homeDirectory.path
-        let candidates = [environment["AGENT_ISLAND_CODEX_PATH"],
+        var candidates = [environment["AGENT_ISLAND_CODEX_PATH"],
             "/Applications/ChatGPT.app/Contents/Resources/codex",
             "/Applications/Codex.app/Contents/Resources/codex",
             "\(home)/Applications/ChatGPT.app/Contents/Resources/codex",
             "\(home)/Applications/Codex.app/Contents/Resources/codex",
             "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex", "\(home)/.npm-global/bin/codex"
         ].compactMap { $0 }
+        candidates += (environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/codex" }
+        if homeOnly { candidates = candidates.filter { $0.hasPrefix(home + "/") } }
         if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            return URL(fileURLWithPath: path)
+            return physicalURL(URL(fileURLWithPath: path))
         }
+        guard !existenceOnly && !homeOnly else { return nil }
         return await loginShellPath(command: "codex", environment: environment)
     }
 

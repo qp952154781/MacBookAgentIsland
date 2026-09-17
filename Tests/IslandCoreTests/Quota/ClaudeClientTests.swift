@@ -61,7 +61,7 @@ private let fakeRefresh = "sk-ant-FAKE-REFRESH"
     let executor = FakeQuotaExecutor([.success(.init(stdout: try quotaFixture("credentials.json"), exitCode: 0))])
     let http = FakeUsageHTTP([.success(.init(statusCode: 200, data: try quotaFixture("claude-limits.json")))])
     let store = ClaudeCredentialStore(executor: executor, now: { fixtureNow }, readFallback: { nil })
-    let client = ClaudeOAuthUsageClient(credentials: store, http: http, executor: executor, locate: { nil }, now: { fixtureNow }, refresher: FakeClaudeRefresher())
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: store, http: http, executor: executor, locate: { nil }, now: { fixtureNow }, refresher: FakeClaudeRefresher())
     let result = try await ClaudeQuotaProvider(client: client).fetchQuota()
     #expect(result.plan == "Max 5x")
     #expect(result.source == .claudeOAuth)
@@ -82,7 +82,7 @@ private let fakeRefresh = "sk-ant-FAKE-REFRESH"
         let executor = FakeQuotaExecutor([.success(.init(stdout: data, exitCode: 0)), .success(.init(stdout: data, exitCode: 0))])
         let store = ClaudeCredentialStore(executor: executor, now: { fixtureNow }, readFallback: { nil })
         let http = FakeUsageHTTP([.success(.init(statusCode: status, data: Data(fakeAccess.utf8), retryAfter: "42"))])
-        let client = ClaudeOAuthUsageClient(credentials: store, http: http, executor: executor, locate: { nil }, now: { fixtureNow }, refresher: FakeClaudeRefresher())
+        let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: store, http: http, executor: executor, locate: { nil }, now: { fixtureNow }, refresher: FakeClaudeRefresher())
         do { _ = try await client.fetchQuota(); Issue.record("Expected status failure") }
         catch let error as QuotaError {
             #expect(!error.message.contains(fakeAccess))
@@ -99,7 +99,7 @@ private let fakeRefresh = "sk-ant-FAKE-REFRESH"
     let data = try quotaFixture("credentials.json")
     for response: Result<UsageHTTPResponse, QuotaError> in [.failure(.transient(fakeAccess)), .success(.init(statusCode: 200, data: Data(fakeAccess.utf8)))] {
         let store = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: data, exitCode: 0))]), now: { fixtureNow }, readFallback: { nil })
-        let client = ClaudeOAuthUsageClient(credentials: store, http: FakeUsageHTTP([response]), locate: { nil })
+        let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: store, http: FakeUsageHTTP([response]), locate: { nil })
         do { _ = try await client.fetchQuota(); Issue.record("Expected failure") }
         catch { #expect(!String(describing: error).contains(fakeAccess)) }
     }
@@ -114,7 +114,7 @@ private let fakeRefresh = "sk-ant-FAKE-REFRESH"
     texts.append(credentialDump)
     let store = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: try quotaFixture("credentials.json"), exitCode: 0))]), readFallback: { nil })
     let body = Data("{\"limits\":[{\"kind\":\"weekly_scoped\",\"percent\":1,\"scope\":{\"model\":{\"display_name\":\"\(fakeAccess)\"}}}]}".utf8)
-    let client = ClaudeOAuthUsageClient(credentials: store, http: FakeUsageHTTP([.success(.init(statusCode: 200, data: body))]), locate: { nil })
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: store, http: FakeUsageHTTP([.success(.init(statusCode: 200, data: body))]), locate: { nil })
     let snapshot = try await client.fetchQuota()
     texts.append(String(describing: snapshot))
     var snapshotDump = ""

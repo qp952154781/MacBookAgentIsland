@@ -26,7 +26,8 @@ import Testing
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
     let pty = ClaudePTYProcess()
     let stream = try await pty.start(executable: script, directory: directory)
-    let cleanup = Task { try? await Task.sleep(for: .seconds(5)); await pty.finish(graceful: false) }
+    // Allow slow process startup under suite load. READY cancels the sleep and reaps immediately.
+    let cleanup = Task { try? await Task.sleep(for: .seconds(20)); await pty.finish(graceful: false) }
     var output = ""
     for try await chunk in stream {
         output += String(decoding: chunk, as: UTF8.self)

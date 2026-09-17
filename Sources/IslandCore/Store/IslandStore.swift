@@ -4,24 +4,79 @@ import Foundation
     public var systemMetrics = SystemMetrics()
     public var systemMetricOptions = SystemMetricOptions()
     public var claudeConnection: ClaudeConnectionStatus?
-    public var quotas: [ProviderID: QuotaSnapshot] = [:]
+    public var quotas: [ProviderID: QuotaSnapshot] = [:] { didSet { onProviderChange?() } }
     public private(set) var quotaDiagnostics: [ProviderID: String] = [:]
-    public var health: [ProviderID: ProviderHealth] = [:]
+    public var health: [ProviderID: ProviderHealth] = [:] { didSet { onProviderChange?() } }
     public private(set) var firstQuotaMs: Double?
     public private(set) var firstSessionMs: Double?
     public var sessionsLoaded = false
     public private(set) var sessionWarnings: [ProviderID: String] = [:]
     @ObservationIgnored private let processStarted: ContinuousClock.Instant
+    public var providerDeclarations = ProviderRegistry.ordered { didSet { providersChanged() } }
+    public var providerDetection: ProviderDetection { didSet { providersChanged() } }
+    public var providerOverrides: [ProviderID: Bool] = [:] { didSet { if oldValue != providerOverrides { providersChanged() } } }
+    public var latestClaudeModel: String? { didSet { if oldValue != latestClaudeModel { providersChanged() } } }
+    public var providerStates: [ProviderState] {
+        ProviderAvailability.resolve(declarations: providerDeclarations, detection: providerDetection,
+                                     overrides: providerOverrides, latestClaudeModel: latestClaudeModel)
+    }
+    public var visibleProviderIDs: [ProviderID] { providerStates.filter(\.hasContent).map(\.id) }
+    public var quotaProviderIDs: [ProviderID] { providerStates.filter(\.quotaAvailable).map(\.id) }
+    public var sessionProviderIDs: [ProviderID] { providerStates.filter(\.sessionsAvailable).map(\.id) }
+    private var quotaServiceIDs: [ProviderID] { providerStates.filter { $0.quotaAvailable && $0.detected }.map(\.id) }
+    private var sessionServiceIDs: [ProviderID] { providerStates.filter { $0.sessionsAvailable && $0.detected }.map(\.id) }
     public var sessions: [AgentSession] = [] {
-        didSet {
-            if sessions != oldValue {
-                displaySessions = SessionDisplayOrder.sorted(sessions)
-                displaySessionColumns = SessionDisplayOrder.columns(sessions)
-            }
-        }
+        didSet { if sessions != oldValue { updateDisplaySessions() } }
     }
     public private(set) var displaySessions: [AgentSession] = []
     public private(set) var displaySessionColumns: [[AgentSession]] = [[], []]
+    @ObservationIgnored public var onProviderChange: (() -> Void)?
+    @ObservationIgnored private let providerClock: any QuotaClock
+    @ObservationIgnored private let providerDetector: (any ProviderDetecting)?
+    @ObservationIgnored private var providerTask: Task<Void, Never>?
+    @ObservationIgnored private var detectionGeneration = 0
+    @ObservationIgnored private var starting = false
+
+    private func updateDisplaySessions() {
+        let visible = sessions.filter { sessionServiceIDs.contains($0.agent) }
+        displaySessions = SessionDisplayOrder.sorted(visible)
+        displaySessionColumns = SessionDisplayOrder.columns(visible, providers: sessionProviderIDs)
+    }
+    private func providersChanged() {
+        for state in providerStates {
+            if !state.detected || state.thirdPartyBackend {
+                quotas[state.id] = nil
+                health[state.id] = state.enabled && !state.thirdPartyBackend
+                    ? .needsSetup(message: "未检测到 " + state.name) : nil
+                if state.id == .claude { claudeConnection = nil }
+            }
+        }
+        updateDisplaySessions()
+        awaitingQuota.formIntersection(Set(quotaServiceIDs)); isRefreshing = !awaitingQuota.isEmpty
+        onProviderChange?()
+        guard isRunning, !starting else { return }
+        let previous = providerTask
+        providerTask = Task { [weak self] in
+            await previous?.value
+            guard !Task.isCancelled, let self, self.isRunning else { return }
+            await self.applyProviderServices()
+        }
+    }
+    private func applyProviderServices() async {
+        await sessionService?.setEnabledProviders(sessionServiceIDs)
+        if let update = await sessionService?.latestUpdate() { await receive(update) }
+        guard !Task.isCancelled else { return }
+        await quotaService?.setEnabledProviders(quotaServiceIDs)
+    }
+    public func detectProviders() async {
+        guard let providerDetector else { return }
+        detectionGeneration += 1
+        let token = detectionGeneration
+        let detected = await providerDetector.detect()
+        guard !Task.isCancelled, token == detectionGeneration else { return }
+        if detected != providerDetection { providerDetection = detected }
+        await providerTask?.value
+    }
     public var sessionListLayout: SessionListLayoutMode = .automatic
     public var lastRefresh: Date?
     public private(set) var isRunning = false
@@ -40,15 +95,18 @@ import Foundation
     @ObservationIgnored private var lastTokenRefresh: Date?
     @ObservationIgnored private var visible = true
 
-    public init(quotaService: (any QuotaServicing)? = nil, sessionService: (any SessionServicing)? = nil,
+    public init(providerDetector: (any ProviderDetecting)? = nil, providerClock: any QuotaClock = SystemQuotaClock(), quotaService: (any QuotaServicing)? = nil, sessionService: (any SessionServicing)? = nil,
                 clock: @escaping @Sendable () -> Date = { Date() },
                 processStarted: ContinuousClock.Instant = .now) {
+        self.providerClock = providerClock
+        self.providerDetector = providerDetector
+        providerDetection = ProviderDetection(installed: providerDetector == nil ? [.claude: true, .codex: true] : [:])
         self.processStarted = processStarted
         self.quotaService = quotaService; self.sessionService = sessionService; self.clock = clock
     }
 
     deinit {
-        tasks.forEach { $0.cancel() }
+        tasks.forEach { $0.cancel() }; providerTask?.cancel()
         let quota = quotaService, sessions = sessionService
         Task {
             async let quotaStop: Void? = quota?.stop()
@@ -59,9 +117,13 @@ import Foundation
 
     public func start() async {
         guard !Task.isCancelled, !isRunning, let quotaService, let sessionService else { return }
-        isRunning = true
+        isRunning = true; starting = true
+        defer { starting = false }
         epoch = UUID()
         let token = epoch
+        await detectProviders()
+        guard !Task.isCancelled, isRunning, token == epoch else { return }
+        await applyProviderServices()
         let quotaStream = await quotaService.updates()
         let sessionStream = await sessionService.updates()
         guard !Task.isCancelled, isRunning, token == epoch else { return }
@@ -77,13 +139,25 @@ import Foundation
                 await self.receive(update)
             }
         })
-        async let quotaStart: Void = quotaService.start()
-        async let sessionStart: Void = sessionService.start()
-        _ = await (quotaStart, sessionStart)
+        // Resolve the already parsed session model before starting any quota worker.
+        await sessionService.start()
+        if let update = await sessionService.latestUpdate() { await receive(update) }
+        guard !Task.isCancelled, isRunning, token == epoch else { return }
+        await applyProviderServices()
+        await quotaService.start()
+        if providerDetector != nil {
+            tasks.append(Task { [weak self, providerClock] in
+                while !Task.isCancelled {
+                    do { try await providerClock.sleep(for: 300) } catch { break }
+                    await self?.detectProviders()
+                }
+            })
+        }
     }
 
     public func stop() async {
-        isRunning = false; epoch = UUID()
+        isRunning = false; epoch = UUID(); detectionGeneration += 1
+        providerTask?.cancel(); providerTask = nil
         tasks.forEach { $0.cancel() }; tasks.removeAll()
         awaitingQuota.removeAll(); isRefreshing = false
         async let quotaStop: Void? = quotaService?.stop()
@@ -92,9 +166,10 @@ import Foundation
     }
 
     public func refreshNow(agent: ProviderID? = nil) async {
+        await providerTask?.value
         guard isRunning else { return }
-        awaitingQuota.formUnion(agent.map { [$0] } ?? ProviderRegistry.orderedIDs)
-        isRefreshing = true
+        awaitingQuota.formUnion((agent.map { [$0] } ?? quotaServiceIDs).filter { quotaServiceIDs.contains($0) })
+        isRefreshing = !awaitingQuota.isEmpty
         async let quotaRefresh: Void? = quotaService?.refreshNow(agent: agent)
         async let sessionRefresh: Void? = sessionService?.refreshNow()
         _ = await (quotaRefresh, sessionRefresh)
@@ -114,9 +189,13 @@ import Foundation
         _ = await (sessions, quota)
     }
 
-    public func retryClaudeConnection() async { await quotaService?.retryClaudeConnection() }
+    public func retryClaudeConnection() async {
+        guard quotaServiceIDs.contains(.claude) else { return }
+        await quotaService?.retryClaudeConnection()
+    }
 
     private func receive(_ update: QuotaUpdate) {
+        guard quotaServiceIDs.contains(update.agent) else { return }
         if let status = update.claudeConnection { claudeConnection = status }
         if let snapshot = update.snapshot {
             if firstQuotaMs == nil { firstQuotaMs = elapsedMilliseconds() }
@@ -132,11 +211,12 @@ import Foundation
     private func receive(_ update: SessionUpdate) async {
         if firstSessionMs == nil { firstSessionMs = elapsedMilliseconds() }
         sessionsLoaded = true
+        if let model = update.latestClaudeModel { latestClaudeModel = model }
         sessionWarnings = update.warnings
         if sessions != update.sessions { sessions = update.sessions }
         expandedSessionIDs.formIntersection(Set(sessions.map(\.id)))
         let now = clock()
-        if visible, update.codexTokenCountChanged, lastTokenRefresh.map({ (now.timeIntervalSince($0) >= 60 || now < $0) }) ?? true {
+        if visible, !starting, quotaServiceIDs.contains(.codex), update.codexTokenCountChanged, lastTokenRefresh.map({ (now.timeIntervalSince($0) >= 60 || now < $0) }) ?? true {
             lastTokenRefresh = now
             await quotaService?.refreshNow(agent: .codex)
         }
@@ -148,7 +228,7 @@ import Foundation
     }
 
     public func workingSessions(for agent: ProviderID) -> [AgentSession] {
-        sessions.filter { $0.agent == agent && $0.phase.isWorking }.sorted { $0.lastActivityAt > $1.lastActivityAt }
+        displaySessions.filter { $0.agent == agent && $0.phase.isWorking }.sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
     public func headline(for agent: ProviderID) -> QuotaWindow? {
         switch health[agent] {
@@ -160,7 +240,7 @@ import Foundation
         var config = IslandLayoutConfig(); config.wingWidth = wingWidth; return config
     }
     public func sessionLayout(notch: NotchMetrics) -> SessionListLayout {
-        SessionListLayout(mode: sessionListLayout, activeCount: sessions.filter { $0.phase != .ended }.count,
+        SessionListLayout(mode: sessionProviderIDs.count == 2 ? sessionListLayout : .singleColumn, activeCount: displaySessions.filter { $0.phase != .ended }.count,
                           notch: notch, singleColumnWidth: layoutConfig.expandedWidth)
     }
     public func layoutConfig(notch: NotchMetrics) -> IslandLayoutConfig {
@@ -168,9 +248,10 @@ import Foundation
         config.expandedWidth = sessionLayout(notch: notch).width
         return config
     }
-    public var anyWorking: Bool { sessions.contains { $0.phase.isWorking } }
+    public var anyWorking: Bool { displaySessions.contains { $0.phase.isWorking } }
 
     public func sessionColumns(count: Int) -> [[AgentSession]] {
-        count == 2 ? displaySessionColumns : [displaySessions]
+        guard !sessionProviderIDs.isEmpty else { return [] }
+        return count == 2 ? displaySessionColumns : [displaySessions]
     }
 }

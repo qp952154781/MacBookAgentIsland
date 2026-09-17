@@ -76,6 +76,7 @@ import IslandCore
 }
 
 struct SettingsView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var settings: AppSettings
     let store: IslandStore
     let connection: ConnectionActions
@@ -86,6 +87,29 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            section("数据源") {
+                ForEach(store.providerStates) { provider in
+                    HStack(spacing: 8) {
+                        AgentGlyph(agent: provider.id, tint: provider.id == .codex ? codexTint : nil,
+                                   animated: false).frame(width: 16, height: 16)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(provider.name)
+                            Text(provider.statusLabel).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if settings.providerOverrides[provider.id] != nil {
+                            Button { settings.setProviderOverride(nil, for: provider.id) } label: {
+                                Text("恢复自动").font(.system(size: 10)).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                            }.buttonStyle(.plain)
+                        }
+                        toggle(provider.name, enabled: provider.enabled, labelHidden: true) {
+                            settings.setProviderOverride(!provider.enabled, for: provider.id)
+                        }
+                    }
+                }
+            }
             section("额度与会话") {
                 HStack {
                     Text("额度显示口径")
@@ -100,11 +124,13 @@ struct SettingsView: View {
             }
             section("会话列表") {
                 choice("会话活跃时间窗", value: $settings.activeMinutes, options: [15, 30, 60], suffix: "分钟")
-                HStack {
-                    Text("布局")
-                    Spacer()
-                    ForEach(SessionListLayoutMode.allCases, id: \.self) { layout in
-                        option(layout.label, selected: settings.sessionListLayout == layout) { settings.sessionListLayout = layout }
+                if store.sessionProviderIDs.count == 2 {
+                    HStack {
+                        Text("布局")
+                        Spacer()
+                        ForEach(SessionListLayoutMode.allCases, id: \.self) { layout in
+                            option(layout.label, selected: settings.sessionListLayout == layout) { settings.sessionListLayout = layout }
+                        }
                     }
                 }
             }
@@ -134,29 +160,31 @@ struct SettingsView: View {
                 toggle("风扇", enabled: settings.showFan) { settings.showFan.toggle() }
                 toggle("内存", enabled: settings.showMemory) { settings.showMemory.toggle() }
             }
-            section("Claude 连接") {
-                Text(connectionLabel).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    let current = snapshot ? snapshotDate : context.date
-                    Text(store.claudeConnection?.expiresAt.map {
-                        $0 > current ? "登录剩余有效期：" + DisplayTime.duration($0.timeIntervalSince(current)) : "登录已到期，等待续期"
-                    } ?? "登录剩余有效期：未知").font(.caption).foregroundStyle(.secondary)
-                }
-                Text(store.claudeConnection?.lastAttempt.map {
-                    "上次自动续期：" + DisplayTime.full($0) + " · " + (store.claudeConnection.map { status in
-                        status.result == .needsLogin && !status.requiresUserAction ? status.recoveryMessage : status.result?.message ?? "未知"
-                    } ?? "未知")
-                } ?? "上次自动续期：暂无").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    if store.claudeConnection?.requiresUserAction == true, case .needsUserSetup = store.claudeConnection?.result {
-                        Button("打开终端完成设置") { connection.openClaudeSetup() }
-                    } else if store.claudeConnection?.requiresUserAction == true, case .needsLogin = store.claudeConnection?.result {
-                        Button("复制登录命令") { connection.copy(.claude) }
+            if store.quotaProviderIDs.contains(.claude) {
+                section("Claude 连接") {
+                    Text(connectionLabel).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        let current = snapshot ? snapshotDate : context.date
+                        Text(store.claudeConnection?.expiresAt.map {
+                            $0 > current ? "登录剩余有效期：" + DisplayTime.duration($0.timeIntervalSince(current)) : "登录已到期，等待续期"
+                        } ?? "登录剩余有效期：未知").font(.caption).foregroundStyle(.secondary)
                     }
-                    Button("重试") { Task { await store.retryClaudeConnection() } }
-                        .disabled(store.claudeConnection?.isRefreshing == true)
-                }.buttonStyle(.bordered)
-                if let error = connection.setupError { Text(error).font(.caption).foregroundStyle(.red) }
+                    Text(store.claudeConnection?.lastAttempt.map {
+                        "上次自动续期：" + DisplayTime.full($0) + " · " + (store.claudeConnection.map { status in
+                            status.result == .needsLogin && !status.requiresUserAction ? status.recoveryMessage : status.result?.message ?? "未知"
+                        } ?? "未知")
+                    } ?? "上次自动续期：暂无").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        if store.claudeConnection?.requiresUserAction == true, case .needsUserSetup = store.claudeConnection?.result {
+                            Button("打开终端完成设置") { connection.openClaudeSetup() }
+                        } else if store.claudeConnection?.requiresUserAction == true, case .needsLogin = store.claudeConnection?.result {
+                            Button("复制登录命令") { connection.copy(.claude) }
+                        }
+                        Button("重试") { Task { await store.retryClaudeConnection() } }
+                            .disabled(store.claudeConnection?.isRefreshing == true)
+                    }.buttonStyle(.bordered)
+                    if let error = connection.setupError { Text(error).font(.caption).foregroundStyle(.red) }
+                }
             }
         }.font(.system(size: 12)).padding(20).frame(width: 470).frame(minHeight: 820)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -200,17 +228,23 @@ struct SettingsView: View {
             }.disabled(value.wrappedValue >= range.upperBound).accessibilityLabel("增加" + title)
         }.buttonStyle(.plain)
     }
-    private func toggle(_ title: String, enabled: Bool, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+    // Resolve before AgentGlyph bakes its bitmap; island glyph colors stay unchanged.
+    private var codexTint: Color { colorScheme == .dark ? Color(white: 0.92) : Color(white: 0.15) }
+
+    private func toggle(_ title: String, enabled: Bool, disabled: Bool = false, labelHidden: Bool = false,
+                        action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
-                Text(title)
-                Spacer()
+                if !labelHidden {
+                    Text(title)
+                    Spacer()
+                }
                 Capsule().fill(enabled ? Color.accentColor : Color.secondary.opacity(0.3)).frame(width: 30, height: 18)
                     .overlay(alignment: enabled ? .trailing : .leading) {
                         Circle().fill(.white).frame(width: 14, height: 14).padding(2)
                     }
             }.contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(disabled).accessibilityValue(enabled ? "开启" : "关闭")
+        }.buttonStyle(.plain).disabled(disabled).accessibilityLabel(title).accessibilityValue(enabled ? "开启" : "关闭")
     }
     private var connectionLabel: String {
         if let status = store.claudeConnection, status.isRefreshing || status.isRecovering || status.requiresUserAction {
@@ -218,7 +252,7 @@ struct SettingsView: View {
         }
         return switch store.health[.claude] {
         case .ok: "已连接"
-        case .needsSetup: ClaudeOAuthUsageClient.recoveringMessage
+        case let .needsSetup(message): message
         case let .failed(message): message
         case let .stale(date): "数据陈旧 · 最近成功 " + DisplayTime.full(date)
         case .disabled: "已停用"

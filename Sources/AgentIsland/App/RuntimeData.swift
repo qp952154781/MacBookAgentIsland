@@ -16,10 +16,12 @@ import IslandCore
                 FixtureSessionProvider(agent: agent, values: fixture.sessions.filter { $0.agent == agent })
             })
             store = options.measure ? IslandStore(quotaService: quota, sessionService: sessions, processStarted: options.processStarted) : fixture
+            if options.measure { store.providerDetection = fixture.providerDetection }
         } else {
             quota = QuotaService(diagnostics: .shared)
-            sessions = SessionService(providers: [ClaudeSessionProvider(), CodexSessionProvider()])
-            store = IslandStore(quotaService: quota, sessionService: sessions, processStarted: options.processStarted)
+            sessions = SessionService(providers: [ClaudeSessionProvider(
+                modelPreferences: ClaudeModelPreferences(defaults: UserDefaults.standard)), CodexSessionProvider()])
+            store = IslandStore(providerDetector: ProviderDetector(), quotaService: quota, sessionService: sessions, processStarted: options.processStarted)
         }
     }
 }

@@ -30,6 +30,7 @@ public enum ClaudeRefreshResult: Sendable, Equatable, Codable {
 }
 
 public struct ClaudeConnectionStatus: Sendable, Equatable, Codable {
+    public var credentialsMissing: Bool?
     public var isRecovering = false
     public var isRefreshing = false
     public var requiresUserAction = false
@@ -39,6 +40,7 @@ public struct ClaudeConnectionStatus: Sendable, Equatable, Codable {
     public var result: ClaudeRefreshResult?
     public init() {}
     public var recoveryMessage: String {
+        if credentialsMissing == true { return "未连接 · 请在终端运行 claude auth login" }
         if requiresUserAction, case .needsLogin = result { return "Claude 登录已失效，请重新登录" }
         if requiresUserAction, case .needsUserSetup = result {
             return "请打开终端完成 Claude Code 设置，岛会每 30 分钟自动重试"
@@ -63,6 +65,7 @@ public protocol ClaudePTY: Sendable {
 }
 
 public actor ClaudeCLIRefresher: ClaudeRefreshing {
+    private let credentialsPresent: @Sendable () async -> Bool?
     private let expiryReader: any ClaudeExpiryReading
     private let makePTY: @Sendable () -> any ClaudePTY
     private let locate: @Sendable () async -> URL?
@@ -71,11 +74,13 @@ public actor ClaudeCLIRefresher: ClaudeRefreshing {
     private let clock: any QuotaClock
     private let diagnostics: ClaudeDiagnostics
     private var inFlight: Task<ClaudeRefreshResult, Never>?
-    public init(expiryReader: any ClaudeExpiryReading,
+    public init(credentialsPresent: @escaping @Sendable () async -> Bool? = { await ClaudeCredentialPresence().exists() },
+                expiryReader: any ClaudeExpiryReading,
                 makePTY: @escaping @Sendable () -> any ClaudePTY = { ClaudePTYProcess() },
                 locate: @escaping @Sendable () async -> URL? = { await ExecutableLocator.claudeCLI() },
                 directory: URL = ClaudeRefreshDirectory.url(), timeout: TimeInterval = 45,
                 clock: any QuotaClock = SystemQuotaClock(), diagnostics: ClaudeDiagnostics = .disabled) {
+        self.credentialsPresent = credentialsPresent
         self.expiryReader = expiryReader; self.makePTY = makePTY; self.locate = locate
         self.directory = directory; self.timeout = timeout; self.clock = clock; self.diagnostics = diagnostics
     }
@@ -96,12 +101,15 @@ public actor ClaudeCLIRefresher: ClaudeRefreshing {
     private func perform(force: Bool) async -> ClaudeRefreshResult {
         let pty = makePTY()
         let result = await withTaskGroup(of: ClaudeRefreshResult.self) { group in
-            group.addTask { [expiryReader, locate, directory, clock] in
+            group.addTask { [credentialsPresent, expiryReader, locate, directory, clock] in
                 do {
                     try Task.checkCancellation()
                     let before = try await expiryReader.expiry()
                     let wasValid = before.map { $0 > clock.now() } ?? false
                     if !force, let before, before.timeIntervalSince(clock.now()) > 1800 { return .alreadyFresh }
+                    // A temporarily unavailable keychain is not evidence of a missing login.
+                    if await credentialsPresent() == false { return .needsLogin }
+                    try Task.checkCancellation()
                     guard let executable = await locate() else { return .needsUserSetup("未找到 Claude Code，请先安装并完成首次设置") }
                     try Task.checkCancellation()
                     let stream = try await pty.start(executable: executable, directory: directory)

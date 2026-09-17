@@ -22,6 +22,8 @@ public protocol SessionProviding: Sendable {
     /// nil requests discovery/reconciliation; paths request a selective refresh.
     func currentSessions(now: Date, changedPaths: Set<String>?) async -> [AgentSession]
     func parsedBytesLastScan() async -> Int
+    /// Last parsed assistant model, retained independently of the active session window.
+    func latestObservedModel() async -> String?
     /// Debounced paths, scoped to this provider. An empty set requests reconciliation.
     func changes() -> AsyncStream<Set<String>>
     func setActiveWindow(_ seconds: TimeInterval) async
@@ -34,9 +36,11 @@ public extension SessionProviding {
         await currentSessions(now: now)
     }
     func parsedBytesLastScan() async -> Int { 0 }
+    func latestObservedModel() async -> String? { nil }
 }
 
 public protocol QuotaServicing: Sendable {
+    func setEnabledProviders(_ ids: [ProviderID]) async
     func retryClaudeConnection() async
     func updates() async -> AsyncStream<QuotaUpdate>
     func start() async
@@ -47,11 +51,14 @@ public protocol QuotaServicing: Sendable {
 }
 
 public extension QuotaServicing {
+    func setEnabledProviders(_ ids: [ProviderID]) async {}
     func retryClaudeConnection() async { await refreshNow(agent: .claude) }
     func setSuspended(_ suspended: Bool) async {}
 }
 
 public protocol SessionServicing: Sendable {
+    func setEnabledProviders(_ ids: [ProviderID]) async
+    func latestUpdate() async -> SessionUpdate?
     func updates() async -> AsyncStream<SessionUpdate>
     func start() async
     func stop() async
@@ -61,5 +68,7 @@ public protocol SessionServicing: Sendable {
 }
 
 public extension SessionServicing {
+    func setEnabledProviders(_ ids: [ProviderID]) async {}
+    func latestUpdate() async -> SessionUpdate? { nil }
     func setVisible(_ visible: Bool) async {}
 }
