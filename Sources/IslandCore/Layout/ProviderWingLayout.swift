@@ -17,7 +17,9 @@ public struct ProviderWingLayout: Equatable, Sendable {
 
     public init(providers: [ProviderState], quotas: [ProviderID: QuotaSnapshot], health: [ProviderID: ProviderHealth],
                 sessions: [AgentSession], mode: QuotaDisplayMode = .remaining) {
-        let visible = providers.filter(\.hasContent)
+        let content = providers.filter(\.hasContent)
+        let quotasFirst = content.filter(\.quotaAvailable)
+        let visible = quotasFirst.count >= 2 ? quotasFirst : content
         singleProvider = visible.count == 1
         func windows(_ id: ProviderID) -> [QuotaWindow] {
             switch health[id] {
@@ -34,6 +36,16 @@ public struct ProviderWingLayout: Equatable, Sendable {
         guard let first = visible.first else { left = .cpu; right = .memory; return }
         if visible.count >= 2 { left = primary(first); right = primary(visible[1]); return }
         let available = first.quotaAvailable ? windows(first.id) : []
+        if quotas[first.id]?.source == .customCommand, !available.isEmpty {
+            let timed = available.allSatisfy { ($0.periodSeconds ?? 0) > 0 }
+            let ordered = timed ? available.sorted { ($0.periodSeconds ?? 0) < ($1.periodSeconds ?? 0) } : available
+            left = .quota(first.id, ordered[0], period: timed ? Self.period(ordered[0]) : nil)
+            if ordered.count >= 2 {
+                let other = timed ? ordered[ordered.count - 1] : ordered[1]
+                right = .quota(first.id, other, period: timed ? Self.period(other) : nil)
+            } else { right = .cpu }
+            return
+        }
         guard let shortest = available.sorted(by: Self.shortestFirst).first else {
             left = first.quotaAvailable ? .quota(first.id, nil, period: nil) : .sessions(first.id, count: count(first.id))
             right = .cpu
@@ -45,6 +57,7 @@ public struct ProviderWingLayout: Equatable, Sendable {
         } else { right = .cpu }
     }
     private static func minutes(_ window: QuotaWindow) -> Int {
+        if let seconds = window.periodSeconds, seconds.isFinite, seconds > 0 { return Int(min(Double(Int.max / 2), max(1, seconds / 60))) }
         if let minutes = window.windowMinutes, minutes > 0 { return minutes }
         switch window.kind { case .session: return 300; case .weekly, .weeklyModel: return 10080; case .other: return 0 }
     }

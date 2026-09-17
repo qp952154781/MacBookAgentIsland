@@ -8,6 +8,7 @@ import IslandCore
 @MainActor @Observable final class BrandGlyphLoader {
     static let shared = BrandGlyphLoader()
     private let files: BrandGlyphFiles
+    private var customGlyphs: [ProviderID: CGImage] = [:]
     private var glyphs: [ProviderID: Glyph] = [:]
 
     /// A decoded source owns a small, bounded cache shared by static and animated views.
@@ -77,6 +78,13 @@ import IslandCore
     }
 
     func glyph(for agent: ProviderID) -> Glyph? { glyphs[agent] }
+
+    func customGlyph(for id: ProviderID) -> CGImage? { customGlyphs[id] }
+    func refreshCustom(_ sources: [CustomSource]) async {
+        let loaded = await files.loadCustomIcons(sources)
+        guard !Task.isCancelled else { return }
+        customGlyphs = loaded
+    }
 
     /// Revalidate on presentation/lifecycle events, never on an animation tick.
     func refresh() async {
@@ -157,6 +165,32 @@ actor BrandGlyphFiles {
             }
         }
         cache = cache.filter { visited.contains($0.key) }
+        return result
+    }
+
+    /// Read selected bundles just like the built-in glyph resources, off the UI executor.
+    /// Icon files are decoded into memory; missing/catalog-only icons use the initial badge.
+    func loadCustomIcons(_ sources: [CustomSource]) -> [ProviderID: CGImage] {
+        var result: [ProviderID: CGImage] = [:]
+        for source in sources {
+            guard let path = source.applicationPath, path.hasSuffix(".app"),
+                  let bundle = Bundle(url: URL(fileURLWithPath: path)) else { continue }
+            let name = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
+                ?? bundle.object(forInfoDictionaryKey: "CFBundleIconName") as? String ?? "AppIcon"
+            guard !name.contains("/"), !name.contains("\\"), name != ".", name != ".." else { continue }
+            let filename = (name as NSString).pathExtension.isEmpty ? name + ".icns" : name
+            let url = URL(fileURLWithPath: path).appendingPathComponent("Contents/Resources/" + filename)
+            guard let attributes = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  attributes.isRegularFile == true, let size = attributes.fileSize, size > 0, size <= 16 * 1024 * 1024,
+                  let data = try? Data(contentsOf: url),
+                  let image = CGImageSourceCreateWithData(data as CFData, nil),
+                  let bitmap = CGImageSourceCreateThumbnailAtIndex(image, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 64,
+                    kCGImageSourceShouldCacheImmediately: true
+                  ] as CFDictionary) else { continue }
+            result[source.id] = bitmap
+        }
         return result
     }
 

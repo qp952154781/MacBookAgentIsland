@@ -11,14 +11,16 @@ enum Theme {
     static let warning = Color(red: 1, green: 0.710, blue: 0.278)
     static let critical = Color(red: 1, green: 0.373, blue: 0.341)
     static let card = Color.white.opacity(0.06)
-    private static func color(_ rgb: ProviderDescriptor.RGB) -> Color {
+    static func color(_ rgb: ProviderDescriptor.RGB) -> Color {
         Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
     static func brand(_ agent: ProviderID) -> Color { color(ProviderRegistry.descriptor(for: agent).brandColor) }
     static func glyph(_ agent: ProviderID) -> Color { color(ProviderRegistry.descriptor(for: agent).glyphColor) }
-    static func quota(_ window: QuotaWindow?, agent: ProviderID, warningThreshold: Double = 70, criticalThreshold: Double = 90) -> Color {
+    static func quota(_ window: QuotaWindow?, agent: ProviderID, warningThreshold: Double = 70, criticalThreshold: Double = 90, descriptor: ProviderDescriptor? = nil) -> Color {
         guard let window else { return secondary }
-        return window.usedPercent >= criticalThreshold ? critical : window.usedPercent >= warningThreshold ? warning : brand(agent)
+        let brand = descriptor.map { color($0.brandColor) } ?? brand(agent)
+        if window.valueText != nil { return brand }
+        return window.usedPercent >= criticalThreshold ? critical : window.usedPercent >= warningThreshold ? warning : brand
     }
     static func phase(_ phase: SessionPhase) -> Color {
         switch phase {

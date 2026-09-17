@@ -8,7 +8,9 @@ import IslandCore
     let settings: AppSettings
     let store: IslandStore
     let connection: ConnectionActions
-    init(settings: AppSettings, store: IslandStore, connection: ConnectionActions) {
+    let previewOnly: Bool
+    init(settings: AppSettings, store: IslandStore, connection: ConnectionActions, previewOnly: Bool = false) {
+        self.previewOnly = previewOnly
         self.settings = settings; self.store = store; self.connection = connection
     }
     func show() {
@@ -18,7 +20,7 @@ import IslandCore
             window.title = "AgentIsland 设置"
             window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: ScrollView {
-                SettingsView(settings: settings, store: store, connection: connection)
+                SettingsView(settings: settings, store: store, connection: connection, commandPreviewOnly: previewOnly)
             })
             window.center()
             self.window = window
@@ -80,6 +82,9 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     let store: IslandStore
     let connection: ConnectionActions
+    var commandPreviewOnly = false
+    var customSnapshotForm = false
+    var customSnapshotDeletion: ProviderID? = nil
     var snapshot = false
     var snapshotDate = Date()
     @State private var loginBusy = false
@@ -91,12 +96,16 @@ struct SettingsView: View {
                 ForEach(store.providerStates) { provider in
                     HStack(spacing: 8) {
                         AgentGlyph(agent: provider.id, tint: provider.id == .codex ? codexTint : nil,
-                                   animated: false).frame(width: 16, height: 16)
+                                   descriptor: store.descriptor(for: provider.id), animated: false).frame(width: 16, height: 16)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(provider.name)
                             Text(provider.statusLabel).font(.system(size: 10)).foregroundStyle(.secondary)
                         }
                         Spacer()
+                        SourceButton("↑") { settings.moveProvider(provider.id, by: -1) }
+                            .disabled(settings.declarations.first?.id == provider.id).accessibilityLabel("上移" + provider.name)
+                        SourceButton("↓") { settings.moveProvider(provider.id, by: 1) }
+                            .disabled(settings.declarations.last?.id == provider.id).accessibilityLabel("下移" + provider.name)
                         if settings.providerOverrides[provider.id] != nil {
                             Button { settings.setProviderOverride(nil, for: provider.id) } label: {
                                 Text("恢复自动").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -110,6 +119,9 @@ struct SettingsView: View {
                     }
                 }
             }
+            CustomSourceSettings(settings: settings, store: store, snapshot: snapshot,
+                                 previewOnly: commandPreviewOnly, snapshotForm: customSnapshotForm,
+                                 snapshotDeletion: customSnapshotDeletion)
             section("额度与会话") {
                 HStack {
                     Text("额度显示口径")

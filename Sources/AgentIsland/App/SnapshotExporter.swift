@@ -76,6 +76,12 @@ import IslandCore
             ("expanded-failed", .idle, .expanded, true), ("expanded-detail", .busy, .expanded, true),
             ("expanded-many", .busy, .expanded, true), ("collapsed-narrow", .critical, .collapsed, true), ("no-notch-collapsed", .idle, .collapsed, false), ("no-notch-expanded", .busy, .expanded, false), ("no-notch-active", .busy, .active, false)
         ]
+        for (name, mode) in [("custom-one", IslandMode.expanded), ("custom-two", .expanded),
+                             ("custom-left", .collapsed), ("custom-left-wide", .collapsed),
+                             ("custom-left-hide-icon", .collapsed), ("custom-left-truncated", .collapsed),
+                             ("custom-single-value", .collapsed), ("custom-error", .expanded)] {
+            cases.append((name, .idle, mode, true))
+        }
         for hasNotch in [true, false] {
             for width in [600, 900] {
                 for load in ["warning", "critical"] {
@@ -125,6 +131,7 @@ import IslandCore
                     configureProviders(store, scenario: scenario)
                 }
             }
+            if name.hasPrefix("custom-") { configureCustomSources(store, scenario: name) }
             switch name {
             case "expanded-system-cpu-warning", "no-notch-system-cpu-warning":
                 store.systemMetrics.cpu = .init(percent: 85, sampleIntervalMs: 1000)
@@ -312,6 +319,17 @@ import IslandCore
                     settings, store: store, glyphs: officialGlyphs, colorScheme: .dark)
             }
         }
+        for scheme in [ColorScheme.light, .dark] {
+            let store = IslandStore.mock(.idle, now: now)
+            configureCustomSources(store, scenario: "custom-two")
+            let settings = AppSettings()
+            settings.customSources = store.customSources
+            files["settings-custom-form-\(scheme == .light ? "light" : "dark").png"] = try renderSettings(
+                settings, store: store, glyphs: officialGlyphs, colorScheme: scheme, customForm: true)
+            files["settings-custom-delete-\(scheme == .light ? "light" : "dark").png"] = try renderSettings(
+                settings, store: store, glyphs: officialGlyphs, colorScheme: scheme,
+                customDeletion: store.customSources.last?.id)
+        }
         // Audit mode has no window. Disk writes run off the UI executor after all rendering completes.
         let renderedFiles = files
         try DispatchQueue.global(qos: .utility).sync {
@@ -323,7 +341,8 @@ import IslandCore
     }
 
     private static func renderSettings(_ settings: AppSettings, store: IslandStore, glyphs: BrandGlyphLoader,
-                                       colorScheme: ColorScheme = .light) throws -> Data {
+                                       colorScheme: ColorScheme = .light, customForm: Bool = false,
+                                       customDeletion: ProviderID? = nil) throws -> Data {
         guard let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua) else {
             throw ExportError.renderFailed("settings-appearance")
         }
@@ -332,7 +351,8 @@ import IslandCore
         // Use the island's already loaded glyphs rather than an unrefreshed shared loader.
         appearance.performAsCurrentDrawingAppearance {
             let renderer = ImageRenderer(content: SettingsView(settings: settings, store: store,
-                connection: ConnectionActions(), snapshot: true, snapshotDate: now)
+                connection: ConnectionActions(), customSnapshotForm: customForm, customSnapshotDeletion: customDeletion,
+                snapshot: true, snapshotDate: now)
                 .environment(\.brandGlyphLoader, glyphs)
                 .environment(\.colorScheme, colorScheme))
             renderer.scale = 2
@@ -342,6 +362,38 @@ import IslandCore
         }
         guard let data else { throw ExportError.renderFailed("settings") }
         return data
+    }
+
+    static func configureCustomSources(_ store: IslandStore, scenario: String) {
+        let first = CustomSource(id: .init(rawValue: "custom-example-quota"), name: "示例额度", command: "echo 62")
+        let second = CustomSource(id: .init(rawValue: "custom-example-balance"), name: "示例余额", command: "echo 62", colorIndex: 1)
+        store.customSources = scenario == "custom-one" ? [first] : scenario == "custom-single-value" ? [second] : [first, second]
+        for source in store.customSources {
+            store.quotas[source.id] = .init(agent: source.id, plan: "Pro", windows: [
+                .init(id: "primary", kind: .other, label: source.id == first.id ? "本周" : "余额", usedPercent: 38,
+                      resetsAt: source.id == first.id ? now.addingTimeInterval(7200) : nil,
+                      valueText: source.id == first.id ? nil : "¥128.50", periodSeconds: source.id == first.id ? 604800 : nil)
+            ], source: .customCommand, fetchedAt: now, note: "内置演示数据")
+            store.health[source.id] = .ok
+        }
+        if scenario.hasPrefix("custom-left") {
+            store.providerOrder = [second.id, .claude, .codex, first.id]
+            store.wingWidth = scenario == "custom-left-wide" ? 100 : 60
+            if scenario == "custom-left-hide-icon" { store.quotas[second.id]?.windows[0].valueText = "¥123456.78" }
+            if scenario == "custom-left-truncated" { store.quotas[second.id]?.windows[0].valueText = "¥12345678.90" }
+        }
+        if scenario == "custom-single-value" {
+            store.providerOverrides = [.claude: false, .codex: false]
+            store.wingWidth = 60
+            store.quotas[second.id]?.windows.append(.init(id: "secondary", kind: .other, label: "余额 2", usedPercent: 0,
+                                                        valueText: "¥987654.32"))
+        }
+        if scenario == "custom-error" {
+            store.health[first.id] = .stale(lastSuccess: now.addingTimeInterval(-600))
+            store.setMockDiagnostic("命令超时", for: first.id)
+            store.quotas[second.id] = nil
+            store.health[second.id] = .failed(message: "命令执行失败（退出码 2）：示例错误")
+        }
     }
 
     static let providerScenarios = ["claude", "codex", "system", "third-party", "both", "claude-unconnected", "claude-narrow"]

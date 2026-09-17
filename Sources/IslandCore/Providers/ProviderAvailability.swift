@@ -24,7 +24,8 @@ public struct ProviderState: Equatable, Sendable, Identifiable, Encodable {
         case available, notDetected, disabledByUser, thirdPartyBackend, unsupported
     }
     public var statusLabel: String {
-        thirdPartyBackend ? "第三方后端 · 仅会话" : detected ? "已检测到" : "未检测到"
+        if id.rawValue.hasPrefix("custom-") { return "自定义" }
+        return thirdPartyBackend ? "第三方后端 · 仅会话" : detected ? "已检测到" : "未检测到"
     }
     public var hasContent: Bool { quotaAvailable || sessionsAvailable }
 

@@ -17,12 +17,13 @@ public struct ProviderDescriptor: Equatable, Sendable, Identifiable {
     public enum IconSource: Equatable, Sendable {
         case builtIn(BuiltInIcon)
         case installedApplication(bundleName: String, resourceNames: [String], fallback: BuiltInIcon)
+        case applicationPath(String)
         case none
 
         public var fallback: BuiltInIcon {
             switch self {
             case let .builtIn(icon), let .installedApplication(_, _, icon): icon
-            case .none: .generic
+            case .none, .applicationPath: .generic
             }
         }
     }

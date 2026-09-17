@@ -19,6 +19,7 @@ public enum QuotaDisplayMode: String, Sendable, CaseIterable {
     }
 
     public func percent(_ window: QuotaWindow?, expanded: Bool = false) -> String {
+        if let text = window?.valueText { return text }
         guard let window, window.usedPercent.isFinite else { return "--" }
         let value = self == .remaining ? floor(window.remainingPercent) : window.usedPercent
         return (self == .remaining && expanded ? "剩 " : "") + String(format: "%.0f%%", value)

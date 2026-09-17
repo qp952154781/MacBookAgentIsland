@@ -10,6 +10,25 @@ import Foundation
 extension UserDefaults: AppSettingsDefaults {}
 
 @MainActor @Observable public final class AppSettings {
+    public var customSources: [CustomSource] { didSet { persist() } }
+    public var providerOrder: [ProviderID] { didSet { persist() } }
+    public var declarations: [ProviderDescriptor] {
+        ProviderOrder.arrange(ProviderRegistry.ordered + customSources.map(\.descriptor), order: providerOrder)
+    }
+    public func saveCustomSource(_ source: CustomSource) {
+        guard source.isValid else { return }
+        if let index = customSources.firstIndex(where: { $0.id == source.id }) { customSources[index] = source }
+        else { customSources.append(source) }
+    }
+    public func deleteCustomSource(_ id: ProviderID) {
+        customSources.removeAll { $0.id == id }
+        providerOverrides[id] = nil; providerOrder.removeAll { $0 == id }
+    }
+    public func moveProvider(_ id: ProviderID, by distance: Int) {
+        var ids = declarations.map(\.id)
+        guard let index = ids.firstIndex(of: id), ids.indices.contains(index + distance) else { return }
+        ids.swapAt(index, index + distance); providerOrder = ids
+    }
     public var providerOverrides: [ProviderID: Bool] { didSet { persist() } }
     public func setProviderOverride(_ value: Bool?, for id: ProviderID) { providerOverrides[id] = value }
     public var showGPU: Bool { didSet { persist() } }
@@ -37,6 +56,11 @@ extension UserDefaults: AppSettingsDefaults {}
     /// Nil defaults keeps snapshot and fixture settings entirely in memory.
     public init(defaults: (any AppSettingsDefaults)? = nil) {
         self.defaults = defaults
+        let data = defaults?.object(forKey: "customSources") as? Data
+        let decoded = data.flatMap { try? JSONDecoder().decode([CustomSource].self, from: $0) } ?? []
+        var seen = Set<ProviderID>()
+        customSources = decoded.filter { $0.isValid && seen.insert($0.id).inserted }
+        providerOrder = (defaults?.object(forKey: "providerOrder") as? [String] ?? []).map(ProviderID.init(rawValue:))
         let saved = defaults?.object(forKey: "providerOverrides") as? [String: Bool] ?? [:]
         providerOverrides = Dictionary(uniqueKeysWithValues: saved.map { (ProviderID(rawValue: $0.key), $0.value) })
         sessionListLayout = defaults?.string(forKey: "sessionListLayout").flatMap(SessionListLayoutMode.init(rawValue:)) ?? .automatic
@@ -70,11 +94,15 @@ extension UserDefaults: AppSettingsDefaults {}
             "showInFullscreen": showInFullscreen, "launchAtLogin": launchAtLogin, "activeMinutes": activeMinutes,
             "expansionMethod": expansionMethod.rawValue, "quotaDisplayMode": quotaDisplayMode.rawValue,
             "sessionListLayout": sessionListLayout.rawValue]
+        defaults?.set(try? JSONEncoder().encode(customSources), forKey: "customSources")
+        defaults?.set(providerOrder.map(\.rawValue), forKey: "providerOrder")
         defaults?.set(Dictionary(uniqueKeysWithValues: providerOverrides.map { ($0.key.rawValue, $0.value) }), forKey: "providerOverrides")
         for (key, value) in values { defaults?.set(value, forKey: key) }
         onChange?()
     }
     public func apply(to store: IslandStore) {
+        store.customSources = customSources
+        store.providerOrder = providerOrder
         store.providerOverrides = providerOverrides
         store.systemMetricOptions = systemMetricOptions
         store.sessionListLayout = sessionListLayout

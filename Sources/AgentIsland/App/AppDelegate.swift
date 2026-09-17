@@ -33,7 +33,7 @@ import IslandCore
         let connection = ConnectionActions()
         UIRenderMetrics.enabled = options.measure
         let model = IslandViewModel(store: store, forcedState: options.forcedState)
-        settingsWindow = SettingsWindowController(settings: settings, store: store, connection: connection)
+        settingsWindow = SettingsWindowController(settings: settings, store: store, connection: connection, previewOnly: options.mockScenario != nil)
         let controller = NotchWindowController(model: model, settings: settings, connection: connection)
         controller.openSettings = { [weak self] in self?.settingsWindow?.show() }
         self.controller = controller
@@ -47,7 +47,7 @@ import IslandCore
         controller.show()
         controller.setSystemSleeping(systemSleeping || locked || displaySleeping)
         if options.mockScenario == nil { model.enableSystemMetrics() }
-        glyphTask = Task { await BrandGlyphLoader.shared.refresh() }
+        glyphTask = Task { await BrandGlyphLoader.shared.refresh(); await BrandGlyphLoader.shared.refreshCustom(settings.customSources) }
         lifecycleTask = Task {
             await store.setVisible(!systemSleeping && !locked && !displaySleeping)
             await store.configure(interval: Double(settings.refreshInterval), activeWindow: Double(settings.activeMinutes * 60))
@@ -80,6 +80,8 @@ import IslandCore
         guard let store else { return }
         controller?.model.setExpansionMethod(settings.expansionMethod)
         settings.apply(to: store)
+        glyphTask?.cancel()
+        glyphTask = Task { await BrandGlyphLoader.shared.refreshCustom(settings.customSources) }
         controller?.model.updateSystemMetrics()
         controller?.refreshVisibility()
         if lastMainScreen != settings.useMainScreen {
@@ -143,9 +145,9 @@ import IslandCore
             await previous?.value; await configuration?.value; await visibility?.value
             finishTermination()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self, !self.readyToTerminate else { return }
-            FileHandle.standardError.write(Data("AgentIsland：退出清理超过 1 秒，结束应用。\n".utf8))
+            FileHandle.standardError.write(Data("AgentIsland：退出清理超过 4 秒，结束应用。\n".utf8))
             self.finishTermination()
         }
         // terminateLater enters AppKit's termination run-loop mode, where Swift's

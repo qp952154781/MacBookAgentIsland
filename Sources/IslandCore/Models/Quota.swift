@@ -3,7 +3,7 @@ import Foundation
 public enum QuotaWindowKind: String, Codable, Sendable { case session, weekly, weeklyModel, other }
 public enum QuotaLevel: String, Codable, Sendable { case normal, warning, critical }
 public enum QuotaSource: String, Codable, Sendable {
-    case codexAppServer, codexRollout, claudeOAuth, claudeStatusLine, mock
+    case codexAppServer, codexRollout, claudeOAuth, claudeStatusLine, mock, customCommand
 }
 
 public struct QuotaWindow: Codable, Sendable, Equatable, Identifiable {
@@ -13,20 +13,23 @@ public struct QuotaWindow: Codable, Sendable, Equatable, Identifiable {
     public var usedPercent: Double
     public var windowMinutes: Int?
     public var resetsAt: Date?
+    public var valueText: String?
+    public var periodSeconds: Double?
 
     public init(id: String, kind: QuotaWindowKind, label: String, usedPercent: Double,
-                windowMinutes: Int? = nil, resetsAt: Date? = nil) {
+                windowMinutes: Int? = nil, resetsAt: Date? = nil, valueText: String? = nil, periodSeconds: Double? = nil) {
         self.id = id
         self.kind = kind
         self.label = label
         self.usedPercent = usedPercent
         self.windowMinutes = windowMinutes
         self.resetsAt = resetsAt
+        self.valueText = valueText; self.periodSeconds = periodSeconds
     }
 
     public func elapsedFraction(now: Date) -> Double? {
-        guard let windowMinutes, windowMinutes > 0, let resetsAt else { return nil }
-        return min(1, max(0, 1 - resetsAt.timeIntervalSince(now) / (Double(windowMinutes) * 60)))
+        guard valueText == nil, let duration = periodSeconds ?? windowMinutes.map({ Double($0) * 60 }), duration > 0, let resetsAt else { return nil }
+        return min(1, max(0, 1 - resetsAt.timeIntervalSince(now) / duration))
     }
 
     public var level: QuotaLevel {
@@ -39,19 +42,21 @@ public struct QuotaSnapshot: Codable, Sendable, Equatable {
     public var plan: String?
     public var windows: [QuotaWindow]
     public var source: QuotaSource
+    public var note: String?
     public var fetchedAt: Date
 
-    public init(agent: ProviderID, plan: String? = nil, windows: [QuotaWindow], source: QuotaSource, fetchedAt: Date) {
+    public init(agent: ProviderID, plan: String? = nil, windows: [QuotaWindow], source: QuotaSource, fetchedAt: Date, note: String? = nil) {
         self.agent = agent
         self.plan = plan
         self.windows = windows
         self.source = source
         self.fetchedAt = fetchedAt
+        self.note = note
     }
 
     public var weekly: QuotaWindow? { windows.first { $0.kind == .weekly } }
     public var session: QuotaWindow? { windows.first { $0.kind == .session } }
-    public var headline: QuotaWindow? { weekly ?? windows.max { $0.usedPercent < $1.usedPercent } }
+    public var headline: QuotaWindow? { source == .customCommand ? windows.first : weekly ?? windows.max { $0.usedPercent < $1.usedPercent } }
 }
 
 public enum ProviderHealth: Codable, Sendable, Equatable {

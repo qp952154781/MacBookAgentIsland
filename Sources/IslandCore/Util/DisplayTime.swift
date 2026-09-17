@@ -48,6 +48,7 @@ public extension QuotaSource {
         case .claudeOAuth: "Claude 额度接口"
         case .claudeStatusLine: "Claude 状态行"
         case .mock: "演示数据"
+        case .customCommand: "自定义命令"
         }
     }
 }

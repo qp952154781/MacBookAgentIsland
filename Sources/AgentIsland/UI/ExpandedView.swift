@@ -18,11 +18,13 @@ struct ExpandedView: View {
         guard !store.quotaProviderIDs.isEmpty else { return 0 }
         let snapshots = store.quotaProviderIDs.compactMap { store.quotas[$0] }
         let count = snapshots.map { $0.windows.count }.max() ?? 0
-        let hasNote = snapshots.contains { store.quotaDisplayMode.fallbackNote($0) != nil }
-        return max(134, 50 + CGFloat(min(4, count)) * 27 + (hasNote ? 18 : 0)) + (store.quotaProviderIDs.contains(.claude) && (store.claudeConnection?.isRefreshing == true || store.claudeConnection?.isRecovering == true) && store.claudeConnection?.requiresUserAction != true ? 36 : 0)
+        let hasNote = snapshots.contains { store.quotaDisplayMode.fallbackNote($0) != nil || $0.note != nil }
+        let hasDiagnostic = store.quotaProviderIDs.contains { store.quotaDiagnostics[$0] != nil && store.quotas[$0]?.source == .customCommand }
+        return max(134, 50 + CGFloat(min(4, count)) * 27 + (hasNote ? 18 : 0) + (hasDiagnostic ? 18 : 0)) + (store.quotaProviderIDs.contains(.claude) && (store.claudeConnection?.isRefreshing == true || store.claudeConnection?.isRecovering == true) && store.claudeConnection?.requiresUserAction != true ? 36 : 0)
     }
+    static func cardRows(store: IslandStore) -> Int { (store.quotaProviderIDs.count + 1) / 2 }
     static func overhead(store: IslandStore) -> CGFloat {
-        cardHeight(store: store) + (store.quotaProviderIDs.isEmpty ? 0 : 10)
+        CGFloat(cardRows(store: store)) * cardHeight(store: store) + CGFloat(max(0, cardRows(store: store) - 1)) * 12 + (store.quotaProviderIDs.isEmpty ? 0 : 10)
             + (store.sessionProviderIDs.isEmpty ? 0 : 30) + 44
     }
     static func layoutConfig(store: IslandStore, notch: NotchMetrics) -> IslandLayoutConfig {
@@ -62,16 +64,14 @@ struct ExpandedView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 if !store.quotaProviderIDs.isEmpty {
-                    HStack(spacing: columns == 2 ? SessionListLayout.columnSpacing : 12) {
-                        ForEach(store.quotaProviderIDs, id: \.self) { agent in
-                            QuotaCard(agent: agent, snapshot: store.quotas[agent], health: store.health[agent], now: now, connection: agent == .claude ? store.claudeConnection : nil,
-                                      credentialsPresent: agent == .claude && store.providerDetection.installed[.claude] == true ? store.providerDetection.claudeCredentialsPresent : nil,
-                                      openSetup: openClaudeSetup, diagnostic: store.quotaDiagnostics[agent],
-                                      height: Self.cardHeight(store: store), warning: store.warningThreshold, critical: store.criticalThreshold,
-                                      displayMode: store.quotaDisplayMode,
-                                      retry: { retry(agent) }, copyLogin: { copyLogin(agent) })
-                        }
-                    }.padding(.top, 10)
+                    if store.quotaProviderIDs.count <= 2 {
+                        // Keep the original stack layout for the existing one/two-card scenes.
+                        HStack(spacing: cardColumnSpacing) { quotaCards }.padding(.top, 10)
+                    } else {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: cardColumnSpacing), count: 2), spacing: 12) {
+                            quotaCards
+                        }.padding(.top, 10)
+                    }
                 }
                 if !store.sessionProviderIDs.isEmpty {
                     sessionHeader
@@ -110,6 +110,17 @@ struct ExpandedView: View {
             }
         }.padding(.horizontal, IslandLayout.expandedContentInset).padding(.bottom, 12).frame(height: availableHeight)
     }
+    private var cardColumnSpacing: CGFloat { columns == 2 ? SessionListLayout.columnSpacing : 12 }
+    private var quotaCards: some View {
+        ForEach(store.quotaProviderIDs, id: \.self) { agent in
+            QuotaCard(agent: agent, snapshot: store.quotas[agent], health: store.health[agent], now: now, descriptor: store.descriptor(for: agent), connection: agent == .claude ? store.claudeConnection : nil,
+                      credentialsPresent: agent == .claude && store.providerDetection.installed[.claude] == true ? store.providerDetection.claudeCredentialsPresent : nil,
+                      openSetup: openClaudeSetup, diagnostic: store.quotaDiagnostics[agent],
+                      height: Self.cardHeight(store: store), warning: store.warningThreshold, critical: store.criticalThreshold,
+                      displayMode: store.quotaDisplayMode,
+                      retry: { retry(agent) }, copyLogin: { copyLogin(agent) })
+        }
+    }
     private static let sessionViewportSpace = "sessionViewport"
 
     private var sessionHeader: some View {
@@ -118,7 +129,7 @@ struct ExpandedView: View {
                 HStack(spacing: SessionListLayout.columnSpacing) {
                     ForEach(Array(zip(store.sessionProviderIDs, sessionColumns)), id: \.0) { agent, sessions in
                         HStack(spacing: 5) {
-                            Text(ProviderRegistry.descriptor(for: agent).displayName).foregroundStyle(Theme.secondary)
+                            Text(store.descriptor(for: agent).displayName).foregroundStyle(Theme.secondary)
                             Text("· \(sessions.filter { $0.phase != .ended }.count)").foregroundStyle(Theme.tertiary)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -203,6 +214,6 @@ struct ExpandedView: View {
     }
     private func healthHelp(_ agent: ProviderID) -> String {
         let snapshot = store.quotas[agent]
-        return "\(ProviderRegistry.descriptor(for: agent).displayName) · \(snapshot?.source.label ?? "等待数据")\n最近成功：\(snapshot.map { DisplayTime.full($0.fetchedAt) } ?? "暂无")"
+        return "\(store.descriptor(for: agent).displayName) · \(snapshot?.source.label ?? "等待数据")\n最近成功：\(snapshot.map { DisplayTime.full($0.fetchedAt) } ?? "暂无")"
     }
 }

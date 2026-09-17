@@ -26,7 +26,7 @@ import Testing
     for match in matches.reversed() {
         let range = try #require(Range(match.range, in: main))
         let branch = String(main[range])
-        #expect(branch.contains("return") || branch.contains("exit(await DumpQuota.run(home: options.home))"))
+        #expect(branch.contains("return") || branch.contains("exit(await DumpQuota.run("))
         main.removeSubrange(range)
     }
     #expect(main.range(of: #"\bawait\b"#, options: .regularExpression) == nil)

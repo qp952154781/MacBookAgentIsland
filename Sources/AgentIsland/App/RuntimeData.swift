@@ -11,7 +11,7 @@ import IslandCore
             let fixture = IslandStore.mock(scenario)
             quota = QuotaService(providers: ProviderRegistry.orderedIDs.map { agent in
                 FixtureQuotaProvider(agent: agent, snapshot: fixture.quotas[agent])
-            }, intervals: [.claude: 60, .codex: 60])
+            }, intervals: [.claude: 60, .codex: 60], allowsCustomCommands: false)
             sessions = SessionService(providers: ProviderRegistry.orderedIDs.map { agent in
                 FixtureSessionProvider(agent: agent, values: fixture.sessions.filter { $0.agent == agent })
             })

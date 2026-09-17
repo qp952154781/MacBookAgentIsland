@@ -39,14 +39,26 @@ struct AgentGlyph: View {
     @Environment(\.brandGlyphLoader) private var injectedLoader
     let agent: ProviderID
     var tint: Color?
+    var descriptor: ProviderDescriptor? = nil
     var working = false
     var animated = true
     var body: some View {
         let loader = injectedLoader ?? BrandGlyphLoader.shared
         let glyph = loader.glyph(for: agent)
-        let color = tint ?? Theme.glyph(agent)
+        let color = tint ?? descriptor.map { Theme.color($0.glyphColor) } ?? Theme.glyph(agent)
         Group {
-            if animated {
+            if let descriptor, !ProviderRegistry.orderedIDs.contains(agent) {
+                if let bitmap = loader.customGlyph(for: agent) {
+                    Image(decorative: bitmap, scale: displayScale).resizable().scaledToFit()
+                } else {
+                    GeometryReader { geometry in
+                        Text(String(descriptor.displayName.prefix(1)).uppercased())
+                            .font(.system(size: min(geometry.size.width, geometry.size.height) * 0.65, weight: .bold))
+                            .foregroundStyle(color).frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+            } else if animated {
                 LayerAnimationView(kind: .provider(agent), color: color,
                                    running: working, glyph: glyph)
             } else if let glyph {

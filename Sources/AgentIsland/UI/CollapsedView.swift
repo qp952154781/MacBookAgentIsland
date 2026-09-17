@@ -10,7 +10,7 @@ struct CollapsedView: View {
     private var config: IslandLayoutConfig { store.layoutConfig }
 
     var body: some View {
-        let providers = ProviderLayout.wings(in: store.visibleProviderIDs)
+        let providers = (left: store.providerWings.left.agent, right: store.providerWings.right.agent)
         let adaptive = store.providerWings
         HStack(alignment: .top, spacing: 0) {
             if store.visibleProviderIDs.count >= 2, let id = providers.left, store.quotaProviderIDs.contains(id) {
@@ -24,7 +24,18 @@ struct CollapsedView: View {
         .frame(height: notch.notchRect.height, alignment: .top)
     }
 
-    private func adaptiveWing(_ content: ProviderWingLayout.Content, leading: Bool) -> some View {
+    @ViewBuilder private func adaptiveWing(_ content: ProviderWingLayout.Content, leading: Bool) -> some View {
+        if case let .quota(agent, window, period) = content, let value = window?.valueText {
+            let narrow = config.wingWidth < 68
+            valueTextWing(value, window: window, agent: agent, leading: leading, fontSize: narrow ? 9 : 12,
+                          iconSize: narrow ? 11 : 14, spacing: narrow ? 2 : 3,
+                          showIcon: !store.providerWings.singleProvider || leading, period: period ?? "")
+        } else {
+            standardAdaptiveWing(content, leading: leading)
+        }
+    }
+
+    private func standardAdaptiveWing(_ content: ProviderWingLayout.Content, leading: Bool) -> some View {
         let agent = content.agent
         let showBrand = agent != nil && (!store.providerWings.singleProvider || leading)
         let working = showBrand ? agent.map { store.workingSessions(for: $0) } ?? [] : []
@@ -35,20 +46,21 @@ struct CollapsedView: View {
         switch content {
         case let .quota(id, window, period):
             value = store.quotaDisplayMode.percent(window); label = period ?? ""
-            color = Theme.quota(window, agent: id, warningThreshold: store.warningThreshold, criticalThreshold: store.criticalThreshold)
+            color = Theme.quota(window, agent: id, warningThreshold: store.warningThreshold, criticalThreshold: store.criticalThreshold, descriptor: store.descriptor(for: id))
         case let .sessions(id, count): value = "\(count)"; label = "会话"; color = Theme.brand(id)
         case .cpu: value = metricPercent(store.systemMetrics.cpu?.percent); label = "CPU"; color = Theme.primary
         case .memory: value = metricPercent(store.systemMetrics.memory?.percent); label = "内存"; color = Theme.primary
         }
         return HStack(spacing: narrow ? 2 : 3) {
             if showBrand, let agent {
-                AgentGlyph(agent: agent, working: !working.isEmpty, animated: animated && animationsVisible)
+                AgentGlyph(agent: agent, descriptor: store.descriptor(for: agent), working: !working.isEmpty, animated: animated && animationsVisible)
                     .frame(width: narrow ? 11 : 14, height: narrow ? 11 : 14)
             }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value).font(Theme.font(narrow ? 9 : 12, weight: .semibold)).monospacedDigit().foregroundStyle(color)
                 if !label.isEmpty { Text(label).font(Theme.font(narrow ? 6 : 8)).foregroundStyle(Theme.secondary) }
-            }.fixedSize().frame(height: notch.notchRect.height)
+            }.modifier(WingValueSizing(agent: agent, maximumWidth: max(12, config.wingWidth - (showBrand ? 23 : 8))))
+                .frame(height: notch.notchRect.height)
                 .overlay(alignment: .bottom) {
                     if active, !working.isEmpty, let agent {
                         ActivityLine(fraction: working.first?.plan?.fraction, color: Theme.brand(agent), animated: animated, running: animationsVisible)
@@ -64,8 +76,27 @@ struct CollapsedView: View {
     }
 
     @ViewBuilder private func wing(_ agent: ProviderID?, isLeading: Bool) -> some View {
-        if let agent { wingContent(agent, isLeading: isLeading) }
+        if let agent {
+            if let window = store.headline(for: agent), let value = window.valueText {
+                valueTextWing(value, window: window, agent: agent, leading: isLeading,
+                              fontSize: config.wingWidth < 68 ? 10 : 12,
+                              iconSize: config.wingWidth < 68 ? 13 : 14, spacing: config.wingWidth < 68 ? 3 : 5)
+            } else { wingContent(agent, isLeading: isLeading) }
+        }
         else { Color.clear.frame(width: config.wingWidth, height: notch.notchRect.height) }
+    }
+
+    private func valueTextWing(_ value: String, window: QuotaWindow?, agent: ProviderID, leading: Bool,
+                               fontSize: CGFloat, iconSize: CGFloat, spacing: CGFloat,
+                               showIcon: Bool = true, period: String = "") -> some View {
+        let wings = IslandLayout.wingRects(notch: notch, config: config)
+        return ValueTextWing(value: value, descriptor: store.descriptor(for: agent),
+                             color: Theme.quota(window, agent: agent, warningThreshold: store.warningThreshold,
+                                                criticalThreshold: store.criticalThreshold, descriptor: store.descriptor(for: agent)),
+                             fontSize: fontSize, iconSize: iconSize, spacing: spacing,
+                             width: (leading ? wings.left : wings.right).width, height: notch.notchRect.height,
+                             leading: leading, showIcon: showIcon, period: period, periodFontSize: config.wingWidth < 68 ? 6 : 8)
+            .frame(width: config.wingWidth, height: notch.notchRect.height)
     }
 
     private func wingContent(_ agent: ProviderID, isLeading: Bool) -> some View {
@@ -76,7 +107,7 @@ struct CollapsedView: View {
         return ZStack(alignment: .bottom) {
             HStack(spacing: config.wingWidth < 68 ? 3 : 5) {
                 if !isLeading { percentage(quota, agent: agent, working: working) }
-                AgentGlyph(agent: agent, tint: quota == nil ? Theme.secondary : nil, working: !working.isEmpty, animated: animated && animationsVisible)
+                AgentGlyph(agent: agent, tint: quota == nil ? Theme.secondary : nil, descriptor: store.descriptor(for: agent), working: !working.isEmpty, animated: animated && animationsVisible)
                     .frame(width: config.wingWidth < 68 ? 13 : 14, height: config.wingWidth < 68 ? 13 : 14)
                     .overlay(alignment: .topTrailing) {
                         if working.count > 1 {
@@ -94,8 +125,8 @@ struct CollapsedView: View {
         let label = store.health[agent] == nil && quota == nil ? "···" : store.quotaDisplayMode.percent(quota)
         return Text(label)
             .font(Theme.font(config.wingWidth < 68 ? 10 : 12, weight: .semibold)).monospacedDigit()
-            .foregroundStyle(Theme.quota(quota, agent: agent, warningThreshold: store.warningThreshold, criticalThreshold: store.criticalThreshold))
-            .fixedSize()
+            .foregroundStyle(Theme.quota(quota, agent: agent, warningThreshold: store.warningThreshold, criticalThreshold: store.criticalThreshold, descriptor: store.descriptor(for: agent)))
+            .modifier(WingValueSizing(agent: agent, maximumWidth: max(12, config.wingWidth - 26)))
             .offset(y: active ? -2 : 0)
             .frame(height: notch.notchRect.height)
             .overlay {
@@ -109,6 +140,20 @@ struct CollapsedView: View {
                     }
                 }
             }
+    }
+}
+
+private struct WingValueSizing: ViewModifier {
+    let agent: ProviderID?
+    let maximumWidth: CGFloat
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let agent, !ProviderRegistry.orderedIDs.contains(agent) {
+            content.lineLimit(1).truncationMode(.tail).frame(maxWidth: maximumWidth)
+        } else {
+            // Preserve the intrinsic text width and glyph placement of the built-in wings.
+            content.fixedSize()
+        }
     }
 }
 

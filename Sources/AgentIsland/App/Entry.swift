@@ -17,7 +17,7 @@ import IslandCore
                 return
             }
             if options.dump == "providers" {
-                try await DumpProviders.run(home: options.home)
+                try await DumpProviders.run(home: options.home, mock: options.mockScenario)
                 return
             }
             if options.dump == "system" {
@@ -29,7 +29,7 @@ import IslandCore
                 return
             }
             if options.dump == "quota" {
-                exit(await DumpQuota.run(home: options.home))
+                exit(await DumpQuota.run(home: options.home, mock: options.mockScenario))
             }
             if options.dump != nil {
                 print("{\"error\":\"not implemented\"}")

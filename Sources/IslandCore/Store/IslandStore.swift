@@ -5,6 +5,7 @@ import Foundation
     public var systemMetricOptions = SystemMetricOptions()
     public var claudeConnection: ClaudeConnectionStatus?
     public var quotas: [ProviderID: QuotaSnapshot] = [:] { didSet { onProviderChange?() } }
+    public private(set) var quotaWarnings: [ProviderID: [String]] = [:]
     public private(set) var quotaDiagnostics: [ProviderID: String] = [:]
     public var health: [ProviderID: ProviderHealth] = [:] { didSet { onProviderChange?() } }
     public private(set) var firstQuotaMs: Double?
@@ -16,8 +17,18 @@ import Foundation
     public var providerDetection: ProviderDetection { didSet { providersChanged() } }
     public var providerOverrides: [ProviderID: Bool] = [:] { didSet { if oldValue != providerOverrides { providersChanged() } } }
     public var latestClaudeModel: String? { didSet { if oldValue != latestClaudeModel { providersChanged() } } }
+    public var customSources: [CustomSource] = [] { didSet { if oldValue != customSources { providersChanged() } } }
+    public var providerOrder: [ProviderID] = [] { didSet { if oldValue != providerOrder { providersChanged() } } }
+    public var declarations: [ProviderDescriptor] {
+        ProviderOrder.arrange(providerDeclarations + customSources.map(\.descriptor), order: providerOrder)
+    }
+    public func descriptor(for id: ProviderID) -> ProviderDescriptor {
+        declarations.first { $0.id == id } ?? ProviderRegistry.descriptor(for: id)
+    }
     public var providerStates: [ProviderState] {
-        ProviderAvailability.resolve(declarations: providerDeclarations, detection: providerDetection,
+        var detection = providerDetection
+        for source in customSources { detection.installed[source.id] = true }
+        return ProviderAvailability.resolve(declarations: declarations, detection: detection,
                                      overrides: providerOverrides, latestClaudeModel: latestClaudeModel)
     }
     public var visibleProviderIDs: [ProviderID] { providerStates.filter(\.hasContent).map(\.id) }
@@ -42,7 +53,10 @@ import Foundation
         displaySessions = SessionDisplayOrder.sorted(visible)
         displaySessionColumns = SessionDisplayOrder.columns(visible, providers: sessionProviderIDs)
     }
+    public func setMockDiagnostic(_ message: String, for id: ProviderID) { quotaDiagnostics[id] = message }
     private func providersChanged() {
+        let known = Set(declarations.map(\.id))
+        for id in quotas.keys where !known.contains(id) { quotas[id] = nil; health[id] = nil; quotaDiagnostics[id] = nil; quotaWarnings[id] = nil }
         for state in providerStates {
             if !state.detected || state.thirdPartyBackend {
                 quotas[state.id] = nil
@@ -63,10 +77,12 @@ import Foundation
         }
     }
     private func applyProviderServices() async {
+        // Cancel removed commands before any potentially slow session work.
+        await quotaService?.setCustomSources(customSources)
+        await quotaService?.setEnabledProviders(quotaServiceIDs)
+        guard !Task.isCancelled else { return }
         await sessionService?.setEnabledProviders(sessionServiceIDs)
         if let update = await sessionService?.latestUpdate() { await receive(update) }
-        guard !Task.isCancelled else { return }
-        await quotaService?.setEnabledProviders(quotaServiceIDs)
     }
     public func detectProviders() async {
         guard let providerDetector else { return }
@@ -202,6 +218,7 @@ import Foundation
             quotas[update.agent] = snapshot
         }
         quotaDiagnostics[update.agent] = update.diagnostic
+        if let warnings = update.warnings { quotaWarnings[update.agent] = warnings }
         health[update.agent] = update.health
         lastRefresh = clock()
         awaitingQuota.remove(update.agent)

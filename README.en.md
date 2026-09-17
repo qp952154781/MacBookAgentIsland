@@ -46,6 +46,55 @@ AgentIsland itself reads provider data and settings without modifying them, inst
 
 Brand icons are loaded from locally installed Claude / ChatGPT apps, with drawn fallbacks. Third-party icon files are not bundled or distributed as standalone assets; screenshots illustrate the interface.
 
+## Custom data sources
+
+Open Settings → Custom data sources (自定义数据源) → Add (添加), enter a name and command, choose a 1 / 5 / 15 / 30 minute interval (default: 5), and use Test run (测试运行) before saving. This feature requires scripting knowledge; no additional services are built in. Optionally choose a local `.app` icon and badge color. Enable, edit, delete, or reorder providers with ↑ / ↓. The collapsed wings show the first two enabled quota providers; expanded quota cards use two columns.
+
+Commands run as the current user via `/bin/zsh -lc`, with the user home directory as the working directory. The login shell loads PATH from `.zprofile`; use absolute paths if a command cannot be found. Each source refreshes independently, including on launch, unlock, wake, and manual refresh. Lock and sleep pause execution. The same source never runs concurrently; at most three custom commands run at once, including test previews. Commands time out after 15 seconds: SIGTERM targets the entire process group, followed by SIGKILL after two seconds if needed. Disabling or deleting a source also terminates its group. Failures retain the last successful data and mark it stale.
+
+Standard output may contain a single remaining-percentage number or full JSON:
+
+```json
+{
+  "windows": [
+    { "label": "This week", "remainingPercent": 62, "resetsAt": "2026-01-08T00:00:00Z", "periodSeconds": 604800 },
+    { "label": "Balance", "valueText": "¥128.50" }
+  ],
+  "plan": "Pro",
+  "note": "Optional one-line description"
+}
+```
+
+`windows` accepts 1–4 entries; additional entries are ignored with a warning. Each window has a `label` and exactly one of `remainingPercent`, `usedPercent`, or `valueText`. Percentages must be finite and are clamped to 0–100; text is limited to 12 characters. Settings display warnings for missing labels, truncated text, and extra windows. Unknown fields are ignored. `plan`, `note`, ISO 8601 `resetsAt`, and positive `periodSeconds` are optional. The first window is a custom source's headline. When only one source is enabled, complete periods select the shortest and longest windows; otherwise the first two windows are used. Wing text truncates to the available width.
+
+Example 1 — a remaining percentage:
+
+```sh
+echo 62
+```
+
+Example 2 — static JSON (40% used, 60% remaining by default):
+
+```sh
+echo '{"windows":[{"label":"本月","usedPercent":40}]}'
+```
+
+Example 3 — **placeholder template, not a working integration with any real service**. The URL, keychain item name, and response fields are hypothetical: adapt them to your service's official documentation and create the corresponding keychain entry yourself. Keep this in your own script and enter only its path in settings. `jq` ships with macOS 15 and later; install it yourself on earlier versions.
+
+```sh
+#!/bin/zsh
+set -euo pipefail
+quota_api_key=$(/usr/bin/security find-generic-password -s 'ExampleQuotaKey' -w)
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer ${quota_api_key}" \
+  'https://quota.example.invalid/v1/usage' |
+  jq '{windows: [{label: "This month", remainingPercent: .remaining_percent}]}'
+```
+
+Commands are stored in plain text in AgentIsland's own local UserDefaults. Do not inline API keys; read them from the keychain inside your script. The app never writes commands, raw stdout / stderr, or parsed results to logs, diagnostics, or caches; the command in settings is the sole persisted command copy. Stdout is limited to 64 KB; only the first 512 stderr bytes are kept in memory for error display. Network access and file writes performed by a user script depend on that script.
+
+Custom entries in `--dump providers` contain only ID, name, enabled state, last run time, and status category. Run history is in memory, so a new dump process reports empty run history. `--dump quota` executes enabled custom sources once and exports parsed quota data only (error categories only on failure). Mock and snapshot modes use fixtures without executing user commands. Isolated `--home` diagnostics do not load local custom settings.
+
 ## Download and install
 
 No Swift toolchain is needed. Download `AgentIsland-<version>-macOS-universal.zip` from this repository's [Releases page](https://github.com/qp952154781/MacBookAgentIsland/releases). Requires macOS 14 or later.

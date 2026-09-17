@@ -40,6 +40,7 @@ public extension SessionProviding {
 }
 
 public protocol QuotaServicing: Sendable {
+    func setCustomSources(_ sources: [CustomSource]) async
     func setEnabledProviders(_ ids: [ProviderID]) async
     func retryClaudeConnection() async
     func updates() async -> AsyncStream<QuotaUpdate>
@@ -51,6 +52,7 @@ public protocol QuotaServicing: Sendable {
 }
 
 public extension QuotaServicing {
+    func setCustomSources(_ sources: [CustomSource]) async {}
     func setEnabledProviders(_ ids: [ProviderID]) async {}
     func retryClaudeConnection() async { await refreshNow(agent: .claude) }
     func setSuspended(_ suspended: Bool) async {}

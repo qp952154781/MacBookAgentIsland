@@ -6,6 +6,7 @@ struct QuotaCard: View {
     let snapshot: QuotaSnapshot?
     let health: ProviderHealth?
     let now: Date
+    var descriptor: ProviderDescriptor? = nil
     var connection: ClaudeConnectionStatus? = nil
     var credentialsPresent: Bool? = nil
     var openSetup: () -> Void = {}
@@ -20,10 +21,10 @@ struct QuotaCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                AgentGlyph(agent: agent, animated: false).frame(width: 16, height: 16)
-                Text(ProviderRegistry.descriptor(for: agent).displayName).font(Theme.font(12, weight: .semibold))
+                AgentGlyph(agent: agent, descriptor: descriptor, animated: false).frame(width: 16, height: 16)
+                Text(descriptor?.displayName ?? ProviderRegistry.descriptor(for: agent).displayName).lineLimit(1).font(Theme.font(12, weight: .semibold))
                 if let plan = snapshot?.plan {
-                    Text(plan.capitalized).font(Theme.font(9, weight: .medium)).foregroundStyle(Theme.secondary)
+                    Text(plan.capitalized).lineLimit(1).font(Theme.font(9, weight: .medium)).foregroundStyle(Theme.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 2).background(.white.opacity(0.07), in: Capsule())
                 }
                 Spacer(minLength: 0)
@@ -104,6 +105,10 @@ struct QuotaCard: View {
                     .font(Theme.font(9)).foregroundStyle(Theme.secondary)
             }
             ForEach(snapshot.windows) { quotaRow($0) }
+            if let note = snapshot.note { Text(note).font(Theme.font(9)).foregroundStyle(Theme.secondary).lineLimit(1).help(note) }
+            if snapshot.source == .customCommand, let diagnostic {
+                Text(diagnostic).font(Theme.font(9)).foregroundStyle(Theme.warning).lineLimit(1).help(diagnostic)
+            }
             if let note = displayMode.fallbackNote(snapshot) {
                 Text(note).font(Theme.font(9)).foregroundStyle(Theme.secondary)
             }
@@ -141,6 +146,10 @@ struct QuotaCard: View {
         HStack(spacing: 5) {
             Text(window.label).font(Theme.font(10)).foregroundStyle(Theme.secondary)
                 .frame(width: 73, alignment: .leading).lineLimit(1).help(window.label)
+            if let value = window.valueText {
+                Text(value).font(Theme.font(11, weight: .semibold)).foregroundStyle(color(window))
+                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.09)).frame(height: 6)
@@ -155,12 +164,13 @@ struct QuotaCard: View {
             }.frame(height: 6).help(displayMode == .remaining ? "均速刻度：按时间进度应剩余额度；低于刻度表示超速" : "均速刻度：按时间进度应已用额度；超过刻度表示超速")
             Text(displayMode.percent(window, expanded: true)).font(Theme.font(10, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(color(window)).frame(width: displayMode == .remaining ? 48 : 30, alignment: .trailing)
+            }
             Text(DisplayTime.reset(window.resetsAt, now: now)).font(Theme.font(9)).monospacedDigit()
                 .foregroundStyle(Theme.tertiary).frame(width: 62, alignment: .trailing)
                 .help(DisplayTime.resetHelp(window.resetsAt, now: now))
         }.frame(height: 20)
     }
     private func color(_ window: QuotaWindow) -> Color {
-        Theme.quota(window, agent: agent, warningThreshold: warning, criticalThreshold: critical)
+        Theme.quota(window, agent: agent, warningThreshold: warning, criticalThreshold: critical, descriptor: descriptor)
     }
 }

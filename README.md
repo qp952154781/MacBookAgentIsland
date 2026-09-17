@@ -59,6 +59,55 @@ AgentIsland 自己发起的 HTTP 请求仅访问 `api.anthropic.com` 的 Claude 
 
 AgentIsland 自身只读 Claude / Codex 的数据与配置，不安装 hook、不修改 statusLine。续期时由官方 CLI 自行更新其凭据，详见下文。设置保存在 AgentIsland 自己的 UserDefaults 中。解析异常只显示通用提示，不输出损坏记录原文。`--dump sessions` 会包含会话标题、项目路径和动作，请仅在本机检查，分享前自行脱敏。
 
+## 自定义数据源
+
+设置 →「自定义数据源」→「添加」，填写名称与命令，选择 1 / 5 / 15 / 30 分钟刷新（默认 5 分钟），先「测试运行」再保存。适合能编写脚本的用户；本期不内置其他服务。可选本机 `.app` 图标和徽标颜色。数据源列表可开关、编辑、删除，用 ↑ / ↓ 调整所有数据源顺序；收起态显示前两个有额度的生效数据源，展开态额度卡每行两张。
+
+命令通过 `/bin/zsh -lc` 以当前用户身份执行，工作目录为用户主目录，登录 shell 会加载 `.zprofile` 的 PATH。找不到命令时请用绝对路径。启动、解锁、唤醒和点击刷新都会更新；锁屏与睡眠期间暂停。每个源独立定时、同一源串行，所有自定义命令最多同时运行 3 个（含测试运行）。超时 15 秒，向整个进程组发送 SIGTERM，2 秒后必要时 SIGKILL；关闭、删除也会终止进程组。失败保留上次成功数据并标记陈旧。
+
+标准输出可以是一个剩余百分比数字，或完整 JSON：
+
+```json
+{
+  "windows": [
+    { "label": "本周", "remainingPercent": 62, "resetsAt": "2026-01-08T00:00:00Z", "periodSeconds": 604800 },
+    { "label": "余额", "valueText": "¥128.50" }
+  ],
+  "plan": "Pro",
+  "note": "可选的一行说明"
+}
+```
+
+`windows` 接受 1–4 项，更多项仅取前 4 项。每项有 `label`，以及 `remainingPercent`（剩余）、`usedPercent`（已用）或 `valueText` 三选一；百分比必须为有限数值，越界夹到 0–100。文本最多 12 个字符。缺少名称、超长文本或窗口过多时，设置中会提示修正。未知字段忽略；`plan`、`note`、ISO 8601 的 `resetsAt`、正数 `periodSeconds` 均可省略。自定义源主要窗口为第 1 项；仅开一个源时，周期齐全则取最短与最长，否则取前两项。翼内文本按可用宽度截断。
+
+示例 1，最简剩余百分比：
+
+```sh
+echo 62
+```
+
+示例 2，静态 JSON（已用 40%，默认显示剩余 60%）：
+
+```sh
+echo '{"windows":[{"label":"本月","usedPercent":40}]}'
+```
+
+示例 3，**占位模板，不能直接用于任何真实服务**。URL、钥匙串条目名称和响应字段均为假设，需按所用服务的官方文档修改，并先自行创建对应钥匙串条目。建议把模板保存在你自己的脚本中，在设置中仅填写脚本路径。`jq` 自 macOS 15 起随系统提供，更早版本需自行安装。
+
+```sh
+#!/bin/zsh
+set -euo pipefail
+quota_api_key=$(/usr/bin/security find-generic-password -s 'ExampleQuotaKey' -w)
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer ${quota_api_key}" \
+  'https://quota.example.invalid/v1/usage' |
+  jq '{windows: [{label: "本月", remainingPercent: .remaining_percent}]}'
+```
+
+命令以明文保存在 AgentIsland 自己的本机 UserDefaults 设置中。不要内联 API Key，建议在脚本中从钥匙串读取。App 不把命令、原始 stdout / stderr 或解析结果写入日志、诊断文件或缓存；仅设置中的命令文本会持久化。stdout 上限 64 KB，stderr 仅保留前 512 字节在内存中显示错误。用户脚本本身的网络访问与文件写入由脚本决定。
+
+`--dump providers` 中的自定义源仅含 ID、名称、是否生效、上次运行时间与状态类别；运行记录仅在内存中，因此新启动的 dump 进程会显示空记录。`--dump quota` 会执行生效的自定义源一次，只导出解析后的额度数据（失败只导出错误类别）。`--mock` 和快照使用假数据，不执行用户命令。`--home` 隔离诊断不加载本机自定义设置。
+
 ## 下载安装
 
 无需安装 Swift 工具链。前往仓库的 [Releases 页面](https://github.com/qp952154781/MacBookAgentIsland/releases)，下载 `AgentIsland-<版本>-macOS-universal.zip`，适用于 macOS 14+。
