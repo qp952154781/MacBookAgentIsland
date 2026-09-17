@@ -17,11 +17,12 @@ struct DumpSystem {
         let counters = await provider.cpu()
         let cpuTime = await scheduler.now()
         let cpu = counters.flatMap { cpuDifference.reading(for: $0, time: cpuTime) }
+        let gpu = await provider.gpu()
         let memory = await provider.memory()
         let fan = await provider.fan()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(SystemMetrics(network: network, fan: fan, memory: memory, cpu: cpu))
+        let data = try encoder.encode(SystemMetrics(network: network, fan: fan, memory: memory, cpu: cpu, gpu: gpu))
         print(String(decoding: data, as: UTF8.self))
     }
 }

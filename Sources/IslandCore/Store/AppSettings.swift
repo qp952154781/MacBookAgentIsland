@@ -10,12 +10,13 @@ import Foundation
 extension UserDefaults: AppSettingsDefaults {}
 
 @MainActor @Observable public final class AppSettings {
+    public var showGPU: Bool { didSet { persist() } }
     public var showCPU: Bool { didSet { persist() } }
     public var showNetwork: Bool { didSet { persist() } }
     public var showFan: Bool { didSet { persist() } }
     public var showMemory: Bool { didSet { persist() } }
     public var systemMetricOptions: SystemMetricOptions {
-        .init(network: showNetwork, fan: showFan, memory: showMemory, cpu: showCPU)
+        .init(network: showNetwork, fan: showFan, memory: showMemory, cpu: showCPU, gpu: showGPU)
     }
     public var expansionMethod: ExpansionMethod { didSet { persist() } }
     public var quotaDisplayMode: QuotaDisplayMode { didSet { persist() } }
@@ -42,6 +43,7 @@ extension UserDefaults: AppSettingsDefaults {}
             return value.isFinite ? value : fallback
         }
         func flag(_ key: String, _ fallback: Bool) -> Bool { defaults?.object(forKey: key) as? Bool ?? fallback }
+        showGPU = flag("showGPU", true)
         showCPU = flag("showCPU", true)
         showNetwork = flag("showNetwork", true)
         showFan = flag("showFan", true)
@@ -59,7 +61,7 @@ extension UserDefaults: AppSettingsDefaults {}
         activeMinutes = [15, 30, 60].contains(active) ? Int(active) : 30
     }
     private func persist() {
-        let values: [String: Any] = ["showCPU": showCPU, "showNetwork": showNetwork, "showFan": showFan, "showMemory": showMemory, "refreshInterval": refreshInterval, "warningThreshold": warningThreshold,
+        let values: [String: Any] = ["showGPU": showGPU, "showCPU": showCPU, "showNetwork": showNetwork, "showFan": showFan, "showMemory": showMemory, "refreshInterval": refreshInterval, "warningThreshold": warningThreshold,
             "criticalThreshold": criticalThreshold, "wingWidth": wingWidth, "useMainScreen": useMainScreen,
             "showInFullscreen": showInFullscreen, "launchAtLogin": launchAtLogin, "activeMinutes": activeMinutes,
             "expansionMethod": expansionMethod.rawValue, "quotaDisplayMode": quotaDisplayMode.rawValue,

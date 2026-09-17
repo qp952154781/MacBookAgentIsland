@@ -63,6 +63,17 @@ public struct LiveSystemSamplingScheduler: SystemSamplingScheduler {
                         }
                     }
                 }
+                if options.gpu {
+                    group.addTask {
+                        while !Task.isCancelled {
+                            let now = await scheduler.now()
+                            let gpu = await provider.gpu()
+                            guard !Task.isCancelled else { return }
+                            await self?.publishGPU(gpu, token: token)
+                            do { try await scheduler.sleep(until: now + 1) } catch { return }
+                        }
+                    }
+                }
                 if options.network {
                     group.addTask {
                         var difference = NetworkDifferencer()
@@ -97,6 +108,10 @@ public struct LiveSystemSamplingScheduler: SystemSamplingScheduler {
     }
     public func stop() {
         running = false; generation += 1; task?.cancel()
+    }
+    private func publishGPU(_ gpu: GPUMetrics?, token: Int) {
+        guard running, token == generation else { return }
+        metrics.gpu = gpu; receive(metrics)
     }
     private func publishCPU(_ cpu: CPUMetrics?, token: Int) {
         guard running, token == generation else { return }

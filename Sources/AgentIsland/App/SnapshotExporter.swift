@@ -1,9 +1,20 @@
 import AppKit
 import SwiftUI
+import Metal
 import IslandCore
 
 @MainActor enum SnapshotExporter {
     static let now = Date(timeIntervalSince1970: 1789182000)
+
+    static func validateRenderingDevice() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw ExportError.hardwareRendererUnavailable }
+        let name = device.name.lowercased()
+        guard !["swiftshader", "llvmpipe", "software"].contains(where: name.contains) else {
+            throw ExportError.hardwareRendererUnavailable
+        }
+        // Do not expose the host's chip model in public snapshot output.
+        print("快照环境：Metal 硬件设备可用；尺寸使用合成屏幕数据。")
+    }
 
     static func export(to directory: String) async throws {
         let officialGlyphs = BrandGlyphLoader()
@@ -63,6 +74,16 @@ import IslandCore
             ("expanded-many", .busy, .expanded, true), ("collapsed-narrow", .critical, .collapsed, true), ("no-notch-collapsed", .idle, .collapsed, false), ("no-notch-expanded", .busy, .expanded, false), ("no-notch-active", .busy, .active, false)
         ]
         for hasNotch in [true, false] {
+            for width in [600, 900] {
+                for load in ["warning", "critical"] {
+                    cases.append(("system-gpu-\(width)-\(hasNotch ? "notch" : "capsule")-\(load)", .idle, .expanded, hasNotch))
+                }
+            }
+        }
+        for suffix in ["no-fan", "cpu-only", "empty", "unavailable"] {
+            cases.append(("system-gpu-narrow-" + suffix, .idle, .expanded, true))
+        }
+        for hasNotch in [true, false] {
             for scenario in ["unbalanced", "empty-claude", "empty-codex", "both-empty", "details", "left-detail", "narrow"] {
                 cases.append(("sessions-agents-" + scenario + (hasNotch ? "" : "-no-notch"), .idle, .expanded, hasNotch))
             }
@@ -73,10 +94,11 @@ import IslandCore
             store.systemMetrics = SystemMetrics(
                 network: .init(downBytesPerSec: 2.5 * 1024 * 1024, upBytesPerSec: 180 * 1024, interfaces: ["en0"]),
                 fan: .init(fans: [.init(index: 0, rpm: 2507, minRPM: 2317, maxRPM: 6550)]),
-                memory: .init(usedBytes: 72 * 1024, totalBytes: 100 * 1024), cpu: .init(percent: 12, sampleIntervalMs: 1000))
+                memory: .init(usedBytes: 72 * 1024, totalBytes: 100 * 1024), cpu: .init(percent: 12, sampleIntervalMs: 1000), gpu: .init(percent: 31))
             if name.contains("system-spacing") {
                 let percent = name.hasSuffix("-9") ? 9 : 100
                 store.systemMetrics.cpu = .init(percent: Double(percent), sampleIntervalMs: 1000)
+                store.systemMetrics.gpu = .init(percent: Double(percent))
                 store.systemMetrics.memory = .init(usedBytes: UInt64(percent), totalBytes: 100)
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: percent == 9 ? 0 : 2500,
                                                            minRPM: 0, maxRPM: 6550)])
@@ -95,7 +117,7 @@ import IslandCore
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: 5500, minRPM: 2317, maxRPM: 6550)])
             case "expanded-system-stopped":
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: 0, minRPM: 0, maxRPM: 6550)])
-            case "expanded-system-disabled": store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false)
+            case "expanded-system-disabled": store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, gpu: false)
             case "expanded-refreshing", "expanded-recovering", "expanded-recovering-empty", "expanded-setup", "expanded-login":
                 var status = ClaudeConnectionStatus()
                 status.isRefreshing = name == "expanded-refreshing"
@@ -148,6 +170,21 @@ import IslandCore
             default: break
             }
             var notch = metrics(hasNotch: hasNotch)
+            if name.hasPrefix("system-gpu-") {
+                store.systemMetrics.gpu = .init(percent: name.hasSuffix("critical") ? 97 : 85)
+                store.sessionListLayout = name.contains("900") ? .twoColumns : .singleColumn
+                if name.hasSuffix("unavailable") { store.systemMetrics.gpu = nil }
+                if name.hasSuffix("no-fan") {
+                    // Synthetic narrower notch gives three metrics room in a 600 pt panel.
+                    notch.notchRect = CGRect(x: notch.notchRect.midX - 45, y: notch.notchRect.minY,
+                                            width: 90, height: notch.notchRect.height)
+                }
+                if name.hasSuffix("cpu-only") || name.hasSuffix("empty") {
+                    let panelWidth: CGFloat = name.hasSuffix("cpu-only") ? 400 : 320
+                    notch.visibleFrame = CGRect(x: notch.notchRect.midX - (panelWidth + 48) / 2,
+                                                y: 0, width: panelWidth + 48, height: 900)
+                }
+            }
             if name.hasPrefix("sessions-") {
                 let count = name == "sessions-auto-4" ? 4 : name == "sessions-auto-5" ? 5 : name == "sessions-double-2" ? 2 : 12
                 store.sessions = sessionGridFixtures(count: count)
@@ -283,7 +320,15 @@ import IslandCore
             }
         }
     }
-    enum ExportError: Error { case renderFailed(String) }
+    enum ExportError: Error, CustomStringConvertible {
+        case renderFailed(String), hardwareRendererUnavailable
+        var description: String {
+            switch self {
+            case let .renderFailed(name): "快照渲染失败：\(name)"
+            case .hardwareRendererUnavailable: "无法访问 Metal 硬件设备；请在可访问真实显卡的桌面环境运行快照。"
+            }
+        }
+    }
 }
 
 private struct SnapshotScene: View {

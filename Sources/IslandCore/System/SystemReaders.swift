@@ -92,6 +92,7 @@ public enum MemoryReader {
 }
 
 public protocol SystemMetricsProviding: Sendable {
+    func gpu() async -> GPUMetrics?
     func cpu() async -> CPUCounter?
     func network() async -> [NetworkCounter]?
     func memory() async -> MemoryMetrics?
@@ -101,10 +102,14 @@ public protocol SystemMetricsProviding: Sendable {
 
 public actor LiveSystemMetricsProvider: SystemMetricsProviding {
     private let fanReader: FanReader
-    public init(smc: any SMCReading = AppleSMCReader()) { fanReader = FanReader(smc: smc) }
+    private let gpuReader: any GPUReading
+    public init(smc: any SMCReading = AppleSMCReader(), gpu: any GPUReading = IOAcceleratorGPUReader()) {
+        fanReader = FanReader(smc: smc); gpuReader = gpu
+    }
+    public func gpu() async -> GPUMetrics? { Task.isCancelled ? nil : await gpuReader.sample() }
     public func cpu() -> CPUCounter? { Task.isCancelled ? nil : CPUReader.sample() }
     public func network() -> [NetworkCounter]? { Task.isCancelled ? nil : NetworkReader.sample() }
     public func memory() -> MemoryMetrics? { Task.isCancelled ? nil : MemoryReader.sample() }
     public func fan() async -> FanMetrics? { await fanReader.sample() }
-    public func reset() async { await fanReader.reset() }
+    public func reset() async { await fanReader.reset(); await gpuReader.reset() }
 }

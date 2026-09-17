@@ -37,7 +37,7 @@ import Testing
 
 @MainActor @Test func cpuCadenceHotSettingsCollapseAndSuspension() async {
     let settings = AppSettings(), store = IslandStore()
-    settings.showNetwork = false; settings.showMemory = false; settings.showFan = false
+    settings.showGPU = false; settings.showNetwork = false; settings.showMemory = false; settings.showFan = false
     settings.apply(to: store)
     let scheduler = ManualSystemScheduler(), provider = FakeSystemProvider()
     let model = IslandViewModel(store: store)
@@ -96,7 +96,7 @@ import Testing
                     memory: .init(usedBytes: usedBytes, totalBytes: 100),
                     cpu: percent.map { .init(percent: $0, sampleIntervalMs: 1000) })
                 let status = SystemStatusView(metrics: metrics, options: .init(), notch: notch, config: .init())
-                let view = NSHostingView(rootView: status.hardware(compactFan: hasNotch)
+                let view = NSHostingView(rootView: status.hardware(maximumItems: hasNotch ? 2 : 4)
                     .font(Theme.font(10, weight: .medium)).monospacedDigit())
                 let width = view.fittingSize.width
                 #expect(width <= available)

@@ -1,13 +1,14 @@
 import Foundation
 
 public struct SystemMetricOptions: Sendable, Equatable {
+    public var gpu: Bool
     public var cpu: Bool
     public var network: Bool
     public var fan: Bool
     public var memory: Bool
-    public var enabled: Bool { cpu || network || fan || memory }
-    public init(network: Bool = true, fan: Bool = true, memory: Bool = true, cpu: Bool = true) {
-        self.network = network; self.fan = fan; self.memory = memory; self.cpu = cpu
+    public var enabled: Bool { cpu || gpu || network || fan || memory }
+    public init(network: Bool = true, fan: Bool = true, memory: Bool = true, cpu: Bool = true, gpu: Bool = true) {
+        self.network = network; self.fan = fan; self.memory = memory; self.cpu = cpu; self.gpu = gpu
     }
 }
 
@@ -67,19 +68,21 @@ public struct MemoryMetrics: Sendable, Equatable, Encodable {
 }
 
 public struct SystemMetrics: Sendable, Equatable, Encodable {
+    public var gpu: GPUMetrics?
     public var cpu: CPUMetrics?
     public var network: NetworkRate?
     public var fan: FanMetrics?
     public var memory: MemoryMetrics?
-    public init(network: NetworkRate? = nil, fan: FanMetrics? = nil, memory: MemoryMetrics? = nil, cpu: CPUMetrics? = nil) {
-        self.network = network; self.fan = fan; self.memory = memory; self.cpu = cpu
+    public init(network: NetworkRate? = nil, fan: FanMetrics? = nil, memory: MemoryMetrics? = nil, cpu: CPUMetrics? = nil, gpu: GPUMetrics? = nil) {
+        self.network = network; self.fan = fan; self.memory = memory; self.cpu = cpu; self.gpu = gpu
     }
-    enum CodingKeys: String, CodingKey { case network, fan, memory, cpu }
+    enum CodingKeys: String, CodingKey { case network, fan, memory, cpu, gpu }
     public func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(network, forKey: .network); try values.encode(fan, forKey: .fan)
         try values.encode(memory, forKey: .memory)
         try values.encode(cpu, forKey: .cpu)
+        try values.encode(gpu, forKey: .gpu)
     }
 }
 

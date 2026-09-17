@@ -122,6 +122,7 @@ struct SettingsView: View {
             section("系统指标") {
                 toggle("网速", enabled: settings.showNetwork) { settings.showNetwork.toggle() }
                 toggle("显示 CPU", enabled: settings.showCPU) { settings.showCPU.toggle() }
+                toggle("显示 GPU", enabled: settings.showGPU) { settings.showGPU.toggle() }
                 toggle("风扇", enabled: settings.showFan) { settings.showFan.toggle() }
                 toggle("内存", enabled: settings.showMemory) { settings.showMemory.toggle() }
             }

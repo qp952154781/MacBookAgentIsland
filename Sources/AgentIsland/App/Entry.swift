@@ -39,6 +39,7 @@ import IslandCore
                     exit(124)
                 }
             }
+            if options.snapshotDirectory != nil { try SnapshotExporter.validateRenderingDevice() }
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)
             if options.printGeometry {
