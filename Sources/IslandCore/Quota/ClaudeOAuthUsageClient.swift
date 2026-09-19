@@ -61,6 +61,7 @@ public actor ClaudeOAuthUsageClient {
     private var observedEnvironment = false
     private var observedModificationDate = false
     private var refreshStarted: Date?
+    private var signedOut = false
     private var inFlight: Task<QuotaSnapshot, any Error>?
     private var flightID: UUID?
 
@@ -102,6 +103,7 @@ public actor ClaudeOAuthUsageClient {
         }
         // Explicit retry and lifecycle events also bypass a previous success cooldown.
         resetRecovery()
+        signedOut = false
         await diagnostics.record(.retry, at: now())
         await credentials.invalidate()
     }
@@ -138,13 +140,15 @@ public actor ClaudeOAuthUsageClient {
         defer { if flightID == id { inFlight = nil; flightID = nil } }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
-    private func checkEnvironment() async throws {
+    private func checkEnvironment(includeCLI: Bool) async throws -> Bool {
+        var credentialChanged = false
         // Run once per quota poll. The attribute query never uses -w.
         do {
             let modification = try await modificationDate()
             try Task.checkCancellation()
             if observedModificationDate, modification != observedModification {
                 resetRecovery(); await credentials.invalidate()
+                credentialChanged = true
                 await diagnostics.record(.retry, at: now(), category: .credentialChanged)
             }
             observedModification = modification; observedModificationDate = true
@@ -152,6 +156,7 @@ public actor ClaudeOAuthUsageClient {
             try Task.checkCancellation()
             await diagnostics.record(.credentialRead, at: now(), category: .transient)
         }
+        guard includeCLI else { return credentialChanged }
         let version = await cliVersion()
         try Task.checkCancellation()
         if observedEnvironment, version != observedCLI {
@@ -159,9 +164,17 @@ public actor ClaudeOAuthUsageClient {
             await diagnostics.record(.retry, at: now(), category: .cliChanged)
         }
         observedCLI = version; observedEnvironment = true
+        return credentialChanged
     }
     private func fetch(onStatus: @escaping @Sendable (ClaudeConnectionStatus) async -> Void) async throws -> QuotaSnapshot {
-        try await checkEnvironment()
+        // Once signed out, the frequent recovery poll only probes the keychain attribute.
+        // A changed attribute clears this state; the following fetch performs the full CLI check.
+        let credentialChanged = try await checkEnvironment(includeCLI: !signedOut)
+        if credentialChanged { signedOut = false }
+        if signedOut {
+            await markSignedOut(onStatus: onStatus)
+            throw QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)
+        }
         var retried = false
         while true {
             try Task.checkCancellation()
@@ -178,6 +191,11 @@ public actor ClaudeOAuthUsageClient {
                     await onStatus(connection)
                     throw error
                 }
+                if ClaudeCredentialStore.isSignedOut(error) {
+                    signedOut = true
+                    await markSignedOut(onStatus: onStatus)
+                    throw error
+                }
                 throw error
             }
             try Task.checkCancellation()
@@ -187,6 +205,7 @@ public actor ClaudeOAuthUsageClient {
             }
             observedCredential = credential.changeID
             connection.credentialsMissing = nil
+            signedOut = false
             connection.expiresAt = credential.expiresAt
             let expired = credential.expiresAt.map { $0 <= now() } ?? false
             if expired {
@@ -239,6 +258,13 @@ public actor ClaudeOAuthUsageClient {
             default: throw QuotaError.transient("Claude 额度请求失败（HTTP \(response.statusCode)）")
             }
         }
+    }
+    private func markSignedOut(onStatus: @escaping @Sendable (ClaudeConnectionStatus) async -> Void) async {
+        connection = ClaudeConnectionStatus()
+        connection.credentialsMissing = false
+        connection.requiresUserAction = true
+        connection.result = .needsLogin
+        await onStatus(connection)
     }
     private func recoveryError() -> QuotaError {
         if connection.requiresUserAction { return .unauthorized(connection.recoveryMessage) }

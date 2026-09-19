@@ -2,7 +2,19 @@ import Foundation
 
 public enum IslandMode: String, Sendable, CaseIterable { case collapsed, active, expanded }
 
+public enum CollapsedStyle: String, Sendable, CaseIterable {
+    case hidden, wings
+
+    public var label: String {
+        switch self {
+        case .hidden: "藏进刘海"
+        case .wings: "显示两翼"
+        }
+    }
+}
+
 public struct IslandLayoutConfig: Sendable, Equatable {
+    public var collapsedStyle: CollapsedStyle = .hidden
     public var wingWidth: CGFloat = 76
     public var expandedWidth: CGFloat = 600
     public var expandedMinHeight: CGFloat = 200
@@ -15,6 +27,10 @@ public struct IslandLayoutConfig: Sendable, Equatable {
 }
 
 public enum IslandLayout {
+    /// Keeps the hidden software shape strictly inside the physical notch outline.
+    public static let hiddenNotchInset: CGFloat = 1
+    /// Click and hover target used on displays without a hardware notch.
+    public static let virtualNotchWidth: CGFloat = 185
     /// Shared outer alignment for quota cards and the expanded system metrics band.
     public static let expandedContentInset: CGFloat = 16
     /// Collapsed wings narrower than this use compact typography and a tighter outer margin.
@@ -26,6 +42,10 @@ public enum IslandLayout {
     public static let minimumWingWidth: CGFloat = 50
     /// Outer margin of compact wings. The notch side always keeps `notchSafetyInset`.
     public static let compactOuterInset: CGFloat = 3
+    /// The expanded island's default one-column width.
+    public static let singleColumnWidth: CGFloat = 600
+    /// Horizontal room reserved for the expanded shadow around the island.
+    public static let canvasHorizontalPadding: CGFloat = 48
 
     /// Keep the notch anchor even when a side Dock makes the visible frame asymmetric.
     public static func maximumCenteredWidth(notch: NotchMetrics) -> CGFloat {
@@ -34,13 +54,26 @@ public enum IslandLayout {
                              NSMaxX(visible) - NSMidX(notch.notchRect) - 24))
     }
 
+    /// A screen-stable backing width keeps every island shape centered while it animates.
+    public static func canvasWidth(notch: NotchMetrics, config: IslandLayoutConfig = .init()) -> CGFloat {
+        let collapsedWidth = size(for: .collapsed, notch: notch, config: config).width
+        let maximumShapeWidth = max(SessionListLayout.twoColumnWidth,
+                                    max(singleColumnWidth, collapsedWidth))
+        return min(maximumShapeWidth, maximumCenteredWidth(notch: notch)) + canvasHorizontalPadding
+    }
+
     public static func size(for mode: IslandMode, notch: NotchMetrics, config: IslandLayoutConfig = .init(),
                             expandedContentHeight: CGFloat = 400) -> CGSize {
-        let base = NSMakeSize(NSWidth(notch.notchRect) + 2 * config.wingWidth, NSHeight(notch.notchRect))
+        let wings = NSMakeSize(NSWidth(notch.notchRect) + 2 * config.wingWidth, NSHeight(notch.notchRect))
+        let hidden = notch.hasNotch
+            ? NSMakeSize(max(0, NSWidth(notch.notchRect) - 2 * hiddenNotchInset),
+                         max(0, NSHeight(notch.notchRect) - hiddenNotchInset))
+            : NSMakeSize(virtualNotchWidth, NSHeight(notch.notchRect))
+        let collapsed = config.collapsedStyle == .hidden ? hidden : wings
         switch mode {
-        case .collapsed, .active: return base
+        case .collapsed, .active: return collapsed
         case .expanded:
-            return NSMakeSize(min(max(base.width, config.expandedWidth), maximumCenteredWidth(notch: notch)),
+            return NSMakeSize(min(max(wings.width, config.expandedWidth), maximumCenteredWidth(notch: notch)),
                           min(config.expandedMaxHeight, max(config.expandedMinHeight, expandedContentHeight)))
         }
     }

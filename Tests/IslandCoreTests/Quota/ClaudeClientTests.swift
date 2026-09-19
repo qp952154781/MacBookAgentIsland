@@ -35,9 +35,14 @@ private let fakeRefresh = "sk-ant-FAKE-REFRESH"
 @Test func credentialExpiredMalformedDeniedAndProcessErrors() async throws {
     let expired = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: try quotaFixture("credentials-expired.json"), exitCode: 0))]), now: { fixtureNow }, readFallback: { nil })
     #expect(try await expired.credentials().expiresAt == Date(timeIntervalSince1970: 1))
-    for data in [Data("broken".utf8), Data(#"{"claudeAiOauth":{"accessToken":""}}"#.utf8), Data(#"{"claudeAiOauth":{"refreshToken":"sk-ant-FAKE-REFRESH"}}"#.utf8)] {
+    for data in [Data("broken".utf8), Data(#"{"claudeAiOauth":{"refreshToken":"sk-ant-FAKE-REFRESH"}}"#.utf8)] {
         let store = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: data, exitCode: 0))]), readFallback: { nil })
         await #expect(throws: QuotaError.decoding("Claude 凭据格式无效")) { try await store.credentials() }
+    }
+    for token in ["", "   "] {
+        let data = Data("{\"claudeAiOauth\":{\"accessToken\":\"\(token)\"}}".utf8)
+        let store = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: data, exitCode: 0))]), readFallback: { nil })
+        await #expect(throws: QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)) { try await store.credentials() }
     }
     for result: Result<QuotaCommandOutput, QuotaError> in [.failure(.transient(fakeAccess)), .success(.init(stdout: Data(fakeAccess.utf8), exitCode: 36))] {
         let store = ClaudeCredentialStore(executor: FakeQuotaExecutor([result]), readFallback: { Issue.record("Must not fall back on denial"); return nil })
@@ -45,6 +50,29 @@ private let fakeRefresh = "sk-ant-FAKE-REFRESH"
     }
     let fileFailure = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: Data(), exitCode: 44))]), readFallback: { throw CocoaError(.fileReadNoPermission) })
     await #expect(throws: QuotaError.transient("无法读取 Claude 登录文件")) { try await fileFailure.credentials() }
+}
+
+@Test func signedOutCredentialNeedsLoginWithoutHTTPOrRefresherAndUsesSafeDiagnostics() async throws {
+    let directory = try quotaTestDirectory()
+    let diagnostics = ClaudeDiagnostics(directory: directory)
+    let payload = Data("{\"claudeAiOauth\":{\"accessToken\":\"   \",\"refreshToken\":\"(fakeRefresh)\",\"expiresAt\":0}}".utf8)
+    let refresher = FakeClaudeRefresher([.refreshed(.distantFuture)])
+    let http = FakeUsageHTTP([])
+    let store = ClaudeCredentialStore(executor: FakeQuotaExecutor([.success(.init(stdout: payload, exitCode: 0))]),
+                                      diagnostics: diagnostics, readFallback: { nil })
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: store, http: http,
+        refresher: refresher, diagnostics: diagnostics)
+    await #expect(throws: QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)) {
+        try await client.fetchQuota()
+    }
+    let status = await client.status()
+    #expect(status.credentialsMissing == false)
+    #expect(status.requiresUserAction && status.result == .needsLogin)
+    #expect(await refresher.calls.isEmpty)
+    #expect(await http.requests.isEmpty)
+    let lines = await diagnostics.recentLines().joined(separator: "\n")
+    #expect(lines.contains("credentialRead") && lines.contains("fetchEnd") && lines.contains("signedOut"))
+    #expect(!lines.contains(fakeRefresh))
 }
 
 @Test func credentialExpiryEndsCacheReuse() async throws {

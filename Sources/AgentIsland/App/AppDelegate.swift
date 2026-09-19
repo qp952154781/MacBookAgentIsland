@@ -7,6 +7,7 @@ import IslandCore
     private var controller: NotchWindowController?
     private var settingsWindow: SettingsWindowController?
     private var exitTask: Task<Void, Never>?
+    private var cycleTask: Task<Void, Never>?
     private var glyphTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var lifecycleTask: Task<Void, Never>?
@@ -32,7 +33,17 @@ import IslandCore
         let settings = AppSettings(defaults: options.mockScenario == nil ? UserDefaults.standard : nil)
         let connection = ConnectionActions()
         UIRenderMetrics.enabled = options.measure
-        let model = IslandViewModel(store: store, forcedState: options.forcedState)
+        let model = IslandViewModel(store: store, forcedState: options.forcedState ?? (options.cycleStates == nil ? nil : .collapsed))
+        if let seconds = options.cycleStates {
+            cycleTask = Task { [weak model] in
+                var expanded = false
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+                    expanded.toggle()
+                    model?.setForcedState(expanded ? .expanded : .collapsed)
+                }
+            }
+        }
         settingsWindow = SettingsWindowController(settings: settings, store: store, connection: connection, previewOnly: options.mockScenario != nil)
         let controller = NotchWindowController(model: model, settings: settings, connection: connection)
         controller.openSettings = { [weak self] in self?.settingsWindow?.show() }
@@ -133,7 +144,7 @@ import IslandCore
         if readyToTerminate { return .terminateNow }
         guard !terminating else { return .terminateCancel }
         terminating = true
-        exitTask?.cancel(); connectionTask?.cancel(); glyphTask?.cancel()
+        exitTask?.cancel(); cycleTask?.cancel(); connectionTask?.cancel(); glyphTask?.cancel()
         controller?.stop(); settingsWindow?.close()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
@@ -162,7 +173,7 @@ import IslandCore
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationWillTerminate(_ notification: Notification) {
-        exitTask?.cancel(); connectionTask?.cancel(); glyphTask?.cancel()
+        exitTask?.cancel(); cycleTask?.cancel(); connectionTask?.cancel(); glyphTask?.cancel()
         controller = nil; settingsWindow = nil
     }
 }

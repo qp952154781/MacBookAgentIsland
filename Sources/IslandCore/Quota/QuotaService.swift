@@ -240,6 +240,10 @@ public actor QuotaService: QuotaServicing {
     }
 
     private func delay(agent: ProviderID, error: QuotaError?) -> TimeInterval {
+        if agent == .claude, claudeConnection?.credentialsMissing == false,
+           claudeConnection?.requiresUserAction == true, claudeConnection?.result == .needsLogin {
+            return 30
+        }
         if case .notConfigured = error { return 300 }
         let configured = intervals[agent] ?? 120
         if providers[agent] is CustomQuotaProvider { return max(1, configured) }

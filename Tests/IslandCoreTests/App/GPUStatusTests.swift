@@ -9,7 +9,7 @@ import Testing
                                 memory: .init(usedBytes: 72, totalBytes: 100),
                                 cpu: .init(percent: 12, sampleIntervalMs: 1000), gpu: .init(percent: 31))
     for hasNotch in [true, false] {
-        for panelWidth: CGFloat in [600, 900] {
+        for panelWidth: CGFloat in [600, 760] {
             let notch = SnapshotExporter.metrics(hasNotch: hasNotch)
             var config = IslandLayoutConfig()
             config.expandedWidth = panelWidth
@@ -22,7 +22,12 @@ import Testing
                 #expect(plan.level == .compactNetwork)
                 #expect(plan.hidden.isEmpty)
             }
-            if !hasNotch || panelWidth == 900 { #expect(plan.level == .full) }
+            if hasNotch && panelWidth == 760 {
+                #expect(plan.level == .overflow)
+                #expect(plan.hidden.isEmpty)
+                #expect(Set(plan.placements.map(\.item)) == Set(SystemTopBandItem.allCases))
+            }
+            if !hasNotch { #expect(plan.level == .full) }
             let regions = SystemTopBandLayout.regions(panelWidth: panelWidth,
                 notchWidth: hasNotch ? notch.notchRect.width : nil, notchSafetyInset: config.notchSafetyInset)
             for item in plan.placements {

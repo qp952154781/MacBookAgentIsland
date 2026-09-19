@@ -4,16 +4,16 @@
 
 Turn your Mac's notch into a compact Claude Code and Codex quota and session panel.
 
-See remaining quota at a glance. Working sessions get rotating icons and activity bars; hover or click to expand quota cards, session details and system metrics. Completed sessions never open the panel automatically.
+The collapsed island hides inside the hardware notch by default; quota, sessions, and system metrics appear after you hover or click to expand. Displays without a notch use a 185 pt virtual-notch capsule. You can switch the collapsed style back to visible wings in Settings. Completed sessions never open the panel automatically.
 
 All screenshots use built-in mock data, including plans, usage, sessions and system metrics.
 Dates use a fixed example timestamp displayed in UTC. EXIF/XMP and other ancillary metadata have been removed.
 
-**Collapsed** — with both sources enabled, Claude on the left and Codex on the right.
+**Collapsed** — this screenshot uses the optional visible-wings style, with Claude on the left and Codex on the right.
 
 ![Collapsed](docs/images/collapsed.png)
 
-**Active** — a still frame of working-session indicators.
+**Active** — a still frame of the working-session indicators shown in the visible-wings style. With the default hidden style nothing is shown while collapsed; expand to see activity.
 
 ![Active](docs/images/active.png)
 
@@ -26,18 +26,18 @@ Dates use a fixed example timestamp displayed in UTC. EXIF/XMP and other ancilla
 - View remaining quota and reset times, working-session indicators, current actions and context usage. Hover or click to expand; completed sessions never open the panel automatically.
 - Expanded system metrics include network, CPU, memory, and GPU usage and fan speed where available. The top band uses the full available wings beside a notch, aligned with the cards; without a notch, metrics are evenly distributed across one row. Narrow layouts simplify automatically.
 - Enable sources independently. Automatic detection shows Claude Code / Codex by default once used, based on their data directories; settings also allow manual overrides.
-- With one source enabled, both collapsed wings prioritize its different quota periods; when fewer than two windows are available, the other wing shows CPU. With neither provider nor custom sources, use system monitor mode: CPU and memory in the collapsed wings.
+- With the optional visible-wings style, one enabled source uses both wings for its quota periods; when fewer than two windows are available, the other wing shows CPU. With neither provider nor custom sources, the wings can show CPU and memory.
 - Claude Code with a third-party backend such as GLM or Kimi shows sessions only, without official quota or login prompts, when Claude credentials are absent and the last observed model name does not start with `claude-`.
 - Connect other tools' quotas or balances through [custom data sources](#custom-data-sources).
 
 Sessions are sorted by status: running tools first, then thinking (including compacting and retrying), followed by waiting for permission, waiting for input, error, idle, and ended. Within each priority tier, sessions from the same project stay together, with project groups ordered by their latest activity and unnamed projects last. Sessions within each group use newest activity first. Each agent is sorted independently in two-column mode; single-column mode sorts the merged list.
 
-Settings → Session list → Layout (设置 → 会话列表 → 布局) defaults to Auto (自动): when both Claude and Codex are enabled, agent columns appear as soon as there is at least one non-ended session and at least 880 pt of available centered panel width; with no active sessions a single empty-state row is shown. Choose Single column (单列) for a merged list or Two columns (双列) to keep both columns even when there are no sessions; insufficient screen space always falls back to one column, even with Two columns selected. Headers show each agent’s active count. Empty columns keep a placeholder, and shorter columns leave blank space. Expanding details changes only that column; both columns scroll together.
+Settings → Session list → Layout (设置 → 会话列表 → 布局) defaults to Auto (自动): when both Claude and Codex are enabled, agent columns appear as soon as there is at least one non-ended session and at least 760 pt of available centered panel width; with no active sessions a single empty-state row is shown. Choose Single column (单列) for a merged list or Two columns (双列) to keep both columns even when there are no sessions; insufficient screen space always falls back to one column, even with Two columns selected. Headers show each agent’s active count. Empty columns keep a placeholder, and shorter columns leave blank space. Expanding details changes only that column; both columns scroll together.
 
 ## Requirements
 
 - macOS 14 or later, Apple Silicon or Intel.
-- Best on a MacBook with a notch; other displays use a capsule at the top.
+- Best on a MacBook with a notch; other displays use a 185 pt virtual-notch capsule at the top.
 - Claude Code and Codex are optional. Install and use a provider to get its data; official quotas require signing in. Without either, the app works as a system monitor. Connect other tools through [custom data sources](#custom-data-sources).
 - Swift 6 and Command Line Tools to build. No Xcode or third-party dependencies required.
 
@@ -65,7 +65,7 @@ Brand icons are loaded from locally installed Claude / ChatGPT apps, with drawn 
 
 ## Custom data sources
 
-Open Settings → Custom data sources (自定义数据源) → Add (添加), enter a name and command, choose a 1 / 5 / 15 / 30 minute interval (default: 5), and use Test run (测试运行) before saving. This feature requires scripting knowledge; no additional services are built in. Optionally choose a local `.app` icon and badge color. Enable, edit, delete, or reorder providers with ↑ / ↓. The collapsed wings show the first two enabled quota providers; expanded quota cards use two columns.
+Open Settings → Custom data sources (自定义数据源) → Add (添加), enter a name and command, choose a 1 / 5 / 15 / 30 minute interval (default: 5), and use Test run (测试运行) before saving. This feature requires scripting knowledge; no additional services are built in. Optionally choose a local `.app` icon and badge color. Enable, edit, delete, or reorder providers with ↑ / ↓. The optional visible-wings style shows the first two enabled quota providers; expanded quota cards use two columns.
 
 This mock-data example shows Claude, Codex, “API 余额” (API balance) and “团队额度” (team quota) in a 2×2 grid, demonstrating a text balance and a monthly remaining percentage.
 

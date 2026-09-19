@@ -21,10 +21,10 @@ import IslandCore
     #expect(store.layoutConfig(notch: notch).expandedWidth == 600)
     // Four sessions split two per agent: two grid rows, one row (44 pt) shorter than five sessions.
     store.sessions = SnapshotExporter.sessionGridFixtures(count: 4)
-    #expect(store.layoutConfig(notch: notch).expandedWidth == 900)
+    #expect(store.layoutConfig(notch: notch).expandedWidth == 760)
     #expect(ExpandedView.contentHeight(store: store, notch: notch) == 338)
     store.sessions = SnapshotExporter.sessionGridFixtures(count: 5)
-    #expect(store.layoutConfig(notch: notch).expandedWidth == 900)
+    #expect(store.layoutConfig(notch: notch).expandedWidth == 760)
     #expect(ExpandedView.contentHeight(store: store, notch: notch) == 382)
     store.sessions = SnapshotExporter.sessionGridFixtures(count: 2)
     store.sessionListLayout = .twoColumns
@@ -39,7 +39,7 @@ import IslandCore
     let panel = NotchPanel(frame: .zero)
     defer { model.stop(); panel.close() }
     let tracker = HoverTracker(panel: panel, model: model, notch: notch)
-    let outerCell = CGPoint(x: notch.notchRect.midX + 400, y: notch.screenFrame.maxY - 220)
+    let outerCell = CGPoint(x: notch.notchRect.midX + 350, y: notch.screenFrame.maxY - 220)
     store.sessions = []
     tracker.refreshGeometry()
     #expect(!tracker.contains(outerCell))
@@ -80,7 +80,7 @@ import IslandCore
     let notch = SnapshotExporter.metrics(hasNotch: true)
     let host = IslandHostingView(rootView: IslandRootView(store: store, notch: notch, mode: .expanded,
                                                          now: SnapshotExporter.now, animated: false))
-    host.frame = CGRect(x: 0, y: 0, width: 948, height: 436)
+    host.frame = CGRect(x: 0, y: 0, width: 808, height: 436)
     let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.contentView = host
@@ -158,7 +158,7 @@ func agentColumnSharedScrollKeepsCompleteBottomRowsAndReachesTail(hasNotch: Bool
     let notch = SnapshotExporter.metrics(hasNotch: hasNotch)
     let host = IslandHostingView(rootView: IslandRootView(store: store, notch: notch, mode: .expanded,
         now: SnapshotExporter.now, animationsVisible: false).transaction { $0.disablesAnimations = true })
-    host.frame = CGRect(x: 0, y: 0, width: 948, height: 436)
+    host.frame = CGRect(x: 0, y: 0, width: 808, height: 436)
     let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.contentView = host

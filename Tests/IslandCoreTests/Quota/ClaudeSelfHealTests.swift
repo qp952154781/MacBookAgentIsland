@@ -35,6 +35,80 @@ private func healingHTTP(_ count: Int = 5) throws -> FakeUsageHTTP {
     FakeUsageHTTP(Array(repeating: .success(.init(statusCode: 200, data: try quotaFixture("claude-full.json"))), count: count))
 }
 
+private actor SignedOutRecoveryEnvironment: QuotaCommandExecuting {
+    let clock: FakeQuotaClock
+    private var signedIn = false
+    private var modification: Date
+    private(set) var credentialReads = 0
+    private(set) var modificationReads = 0
+    private(set) var cliVersionReads = 0
+    init(clock: FakeQuotaClock) { self.clock = clock; modification = clock.now() }
+    func run(executableURL: URL, arguments: [String], timeout: TimeInterval) -> QuotaCommandOutput {
+        credentialReads += 1
+        let data = signedIn
+            ? refreshCredential(expiry: clock.now().addingTimeInterval(28_800).timeIntervalSince1970)
+            : Data(#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}"#.utf8)
+        return .init(stdout: data, exitCode: 0)
+    }
+    func modificationDate() -> Date {
+        modificationReads += 1
+        return modification
+    }
+    func cliVersion() -> String {
+        cliVersionReads += 1
+        return "fixture-1.0"
+    }
+    func signIn() {
+        signedIn = true
+        modification = modification.addingTimeInterval(1)
+    }
+}
+
+@Test func signedOutAttributePollingRecoversWithinThirtySecondsAndStopsUserAction() async throws {
+    let clock = FakeQuotaClock(), environment = SignedOutRecoveryEnvironment(clock: clock)
+    let http = try healingHTTP(2), refresher = FakeClaudeRefresher([.failed("must not run")])
+    let credentials = ClaudeCredentialStore(executor: environment, now: { clock.now() }, readFallback: { nil })
+    let client = ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: credentials, http: http,
+        now: { clock.now() }, refresher: refresher, clock: clock,
+        modificationDate: { await environment.modificationDate() },
+        cliVersion: { await environment.cliVersion() })
+    let service = QuotaService(providers: [ClaudeQuotaProvider(client: client)], intervals: [.claude: 600],
+                               clock: clock, jitter: { 0 })
+    let updates = QuotaUpdateLog(), stream = await service.updates()
+    let reader = Task { for await value in stream { await updates.append(value) } }
+    await service.start()
+    try await eventually {
+        let status = await client.status()
+        return status.requiresUserAction && status.result == .needsLogin && clock.sleeps.contains(30)
+    }
+    #expect(await environment.credentialReads == 1)
+    #expect(await environment.modificationReads == 1)
+    #expect(await environment.cliVersionReads == 1)
+    #expect(await refresher.calls.isEmpty)
+    #expect(await http.requests.isEmpty)
+
+    // An unchanged attribute poll does not request the keychain password value again.
+    clock.advance(30)
+    try await eventually { clock.sleeps.filter { $0 == 30 }.count == 2 }
+    #expect(await environment.credentialReads == 1)
+    #expect(await environment.modificationReads == 2)
+    // No CLI probe runs during the signed-out 30-second poll.
+    #expect(await environment.cliVersionReads == 1)
+    await environment.signIn()
+    clock.advance(30)
+    try await eventually { await updates.values.last?.health == .ok }
+    #expect(await environment.credentialReads == 2)
+    #expect(await environment.modificationReads >= 3)
+    #expect(await environment.cliVersionReads == 1)
+    #expect(await http.requests.count == 1)
+    #expect(await !client.status().requiresUserAction)
+    #expect(await refresher.calls.isEmpty)
+    // Once the signed-out state has cleared, the next fetch resumes the full environment check.
+    _ = try await client.fetchQuota()
+    #expect(await environment.cliVersionReads == 2)
+    await service.stop(); await reader.value
+}
+
 @Test func sleepingAcrossExpiryWindowRecoversAndServiceReturnsOK() async throws {
     let clock = FakeQuotaClock()
     let environment = HealingEnvironment(clock: clock, expiry: clock.now().addingTimeInterval(3600))

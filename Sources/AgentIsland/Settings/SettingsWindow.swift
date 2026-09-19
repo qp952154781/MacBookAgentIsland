@@ -154,7 +154,16 @@ struct SettingsView: View {
                         option(method.label, selected: settings.expansionMethod == method) { settings.expansionMethod = method }
                     }
                 }
-                number("翅膀宽度", value: $settings.wingWidth, range: Double(IslandLayout.minimumWingWidth)...100, suffix: "pt")
+                HStack {
+                    Text("收起时")
+                    Spacer()
+                    ForEach(CollapsedStyle.allCases, id: \.self) { style in
+                        option(style.label, selected: settings.collapsedStyle == style) { settings.collapsedStyle = style }
+                    }
+                }
+                if settings.collapsedStyle == .wings {
+                    number("翅膀宽度", value: $settings.wingWidth, range: Double(IslandLayout.minimumWingWidth)...100, suffix: "pt")
+                }
                 HStack {
                     Text("显示屏幕")
                     Spacer()

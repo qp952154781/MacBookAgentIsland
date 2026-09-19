@@ -114,6 +114,11 @@ import Testing
         #expect(throws: LaunchOptions.ParseError.self) { try LaunchOptions(arguments: args) }
     }
     #expect(try LaunchOptions(arguments: ["--help"]).help)
+    #expect(try LaunchOptions(arguments: ["--cycle-states", "1.5"]).cycleStates == 1.5)
+    for args in [["--cycle-states", "0.1"], ["--cycle-states", "31"], ["--cycle-states", "nan"],
+                 ["--cycle-states", "2", "--force-state", "expanded"], ["--cycle-states", "2", "--login-item", "on"]] {
+        #expect(throws: LaunchOptions.ParseError.self) { try LaunchOptions(arguments: args) }
+    }
     #expect(LaunchOptions.helpText.contains("跳过钥匙串"))
     #expect(LaunchOptions.helpText.contains("GUI 模式不接受"))
 }

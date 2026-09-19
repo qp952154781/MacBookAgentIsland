@@ -16,20 +16,18 @@ private func gridMetrics(width: CGFloat = 1512, visibleWidth: CGFloat? = nil) ->
     #expect(none.columns == 1 && none.width == 600)
     for count in [1, 2, 4, 5, 12] {
         let layout = SessionListLayout(mode: .automatic, activeCount: count, notch: notch)
-        #expect(layout.columns == 2 && layout.width == 900)
+        #expect(layout.columns == 2 && layout.width == SessionListLayout.twoColumnWidth)
     }
     #expect(SessionListLayout(mode: .singleColumn, activeCount: 12, notch: notch).columns == 1)
     for count in [0, 1, 2] {
         #expect(SessionListLayout(mode: .twoColumns, activeCount: count, notch: notch).columns == 2)
     }
     for mode in SessionListLayoutMode.allCases {
-        let narrow = SessionListLayout(mode: mode, activeCount: 12, notch: gridMetrics(visibleWidth: 927))
+        let narrow = SessionListLayout(mode: mode, activeCount: 12, notch: gridMetrics(visibleWidth: 807))
         #expect(narrow.columns == 1 && narrow.width == 600)
     }
-    let capped = SessionListLayout(mode: .automatic, activeCount: 12, notch: gridMetrics(visibleWidth: 938))
-    #expect(capped.columns == 2 && capped.width == 890)
-    let minimum = SessionListLayout(mode: .twoColumns, activeCount: 2, notch: gridMetrics(visibleWidth: 928))
-    #expect(minimum.columns == 2 && minimum.width == 880)
+    let minimum = SessionListLayout(mode: .twoColumns, activeCount: 2, notch: gridMetrics(visibleWidth: 808))
+    #expect(minimum.columns == 2 && minimum.width == 760)
     #expect(SessionListLayout(mode: .automatic, activeCount: 12, notch: gridMetrics(width: 600)).width == 552)
 }
 

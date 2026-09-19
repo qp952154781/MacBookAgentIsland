@@ -40,6 +40,7 @@ extension UserDefaults: AppSettingsDefaults {}
         .init(network: showNetwork, fan: showFan, memory: showMemory, cpu: showCPU, gpu: showGPU)
     }
     public var expansionMethod: ExpansionMethod { didSet { persist() } }
+    public var collapsedStyle: CollapsedStyle { didSet { persist() } }
     public var quotaDisplayMode: QuotaDisplayMode { didSet { persist() } }
     public var refreshInterval: Int { didSet { persist() } }
     public var warningThreshold: Double { didSet { persist() } }
@@ -65,6 +66,7 @@ extension UserDefaults: AppSettingsDefaults {}
         providerOverrides = Dictionary(uniqueKeysWithValues: saved.map { (ProviderID(rawValue: $0.key), $0.value) })
         sessionListLayout = defaults?.string(forKey: "sessionListLayout").flatMap(SessionListLayoutMode.init(rawValue:)) ?? .automatic
         expansionMethod = defaults?.string(forKey: "expansionMethod").flatMap(ExpansionMethod.init(rawValue:)) ?? .hover
+        collapsedStyle = defaults?.string(forKey: "collapsedStyle").flatMap(CollapsedStyle.init(rawValue:)) ?? .hidden
         quotaDisplayMode = defaults?.string(forKey: "quotaDisplayMode").flatMap(QuotaDisplayMode.init(rawValue:)) ?? .remaining
         func number(_ key: String, _ fallback: Double) -> Double {
             let value = (defaults?.object(forKey: key) as? NSNumber)?.doubleValue ?? fallback
@@ -93,7 +95,7 @@ extension UserDefaults: AppSettingsDefaults {}
             "criticalThreshold": criticalThreshold, "wingWidth": wingWidth, "useMainScreen": useMainScreen,
             "showInFullscreen": showInFullscreen, "launchAtLogin": launchAtLogin, "activeMinutes": activeMinutes,
             "expansionMethod": expansionMethod.rawValue, "quotaDisplayMode": quotaDisplayMode.rawValue,
-            "sessionListLayout": sessionListLayout.rawValue]
+            "sessionListLayout": sessionListLayout.rawValue, "collapsedStyle": collapsedStyle.rawValue]
         defaults?.set(try? JSONEncoder().encode(customSources), forKey: "customSources")
         defaults?.set(providerOrder.map(\.rawValue), forKey: "providerOrder")
         defaults?.set(Dictionary(uniqueKeysWithValues: providerOverrides.map { ($0.key.rawValue, $0.value) }), forKey: "providerOverrides")
@@ -107,6 +109,7 @@ extension UserDefaults: AppSettingsDefaults {}
         store.systemMetricOptions = systemMetricOptions
         store.sessionListLayout = sessionListLayout
         store.quotaDisplayMode = quotaDisplayMode
+        store.collapsedStyle = collapsedStyle
         store.warningThreshold = warningThreshold; store.criticalThreshold = criticalThreshold
         store.wingWidth = wingWidth
     }

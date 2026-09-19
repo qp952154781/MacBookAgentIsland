@@ -32,16 +32,3 @@ struct NotchShape: Shape {
         return path
     }
 }
-
-private struct IslandTransition: ViewModifier {
-    var progress: Double
-    func body(content: Content) -> some View {
-        content.opacity(progress).scaleEffect(0.96 + 0.04 * progress, anchor: .top).blur(radius: 5 * (1 - progress))
-    }
-}
-
-extension AnyTransition {
-    static var islandContent: AnyTransition {
-        .modifier(active: IslandTransition(progress: 0), identity: IslandTransition(progress: 1))
-    }
-}

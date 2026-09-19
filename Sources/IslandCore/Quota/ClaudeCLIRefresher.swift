@@ -115,6 +115,7 @@ public actor ClaudeCLIRefresher: ClaudeRefreshing {
                     let stream = try await pty.start(executable: executable, directory: directory)
                     return try await Self.interact(stream: stream, pty: pty, reader: expiryReader, wasValid: wasValid, clock: clock)
                 } catch {
+                    if ClaudeCredentialStore.isSignedOut(error) { return .needsLogin }
                     return .failed(Task.isCancelled ? "自动续期已取消" : "无法完成 Claude 自动续期")
                 }
             }
@@ -196,11 +197,12 @@ public actor ClaudeCLIRefresher: ClaudeRefreshing {
                                     }
                                 }
                             } catch {
-                                events.continuation.yield(.ended)
+                                events.continuation.yield(ClaudeCredentialStore.isSignedOut(error) ? .signedOut : .ended)
                             }
                         }
                     }
                 case let .renewed(expiry): return wasValid ? .alreadyFresh : .refreshed(expiry)
+                case .signedOut: return .needsLogin
                 case .usageTimedOut: return .failed("Claude 自动续期超时")
                 case .ended: return .failed("Claude 续期进程提前退出")
                 }
@@ -211,5 +213,5 @@ public actor ClaudeCLIRefresher: ClaudeRefreshing {
 }
 
 private enum RefreshEvent: Sendable {
-    case output(Data), tick, renewed(Date), usageTimedOut, ended
+    case output(Data), tick, renewed(Date), signedOut, usageTimedOut, ended
 }

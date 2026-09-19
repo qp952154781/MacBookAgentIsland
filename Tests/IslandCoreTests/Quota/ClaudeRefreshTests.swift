@@ -121,10 +121,49 @@ actor FakeClaudeRefresher: ClaudeRefreshing {
 }
 
 @Test func expiryReaderOnlyDecodesExpiryAndZeroIsRefreshable() async throws {
-    let data = Data(#"{"claudeAiOauth":{"expiresAt":0,"accessToken":{"unexpected":true},"refreshToken":{"unexpected":true}}}"#.utf8)
+    let data = Data(#"{"claudeAiOauth":{"expiresAt":0,"accessToken":"FAKE-ACCESS","refreshToken":{"unexpected":true}}}"#.utf8)
     let reader = ClaudeKeychainExpiryReader(executor: FakeQuotaExecutor([.success(.init(stdout: data, exitCode: 0))]))
     #expect(try await reader.expiry() == Date(timeIntervalSince1970: 0))
+    let signedOut = Data(#"{"claudeAiOauth":{"expiresAt":0,"accessToken":"   ","refreshToken":"FAKE-REFRESH"}}"#.utf8)
+    let signedOutReader = ClaudeKeychainExpiryReader(executor: FakeQuotaExecutor([.success(.init(stdout: signedOut, exitCode: 0))]))
+    await #expect(throws: QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)) {
+        try await signedOutReader.expiry()
+    }
     #expect(ClaudeTerminalParser.result("refresh token expired") == .needsLogin)
+}
+
+private actor SignedOutExpiryReader: ClaudeExpiryReading {
+    private var values: [Result<Date?, QuotaError>]
+    init(_ values: [Result<Date?, QuotaError>]) { self.values = values }
+    func expiry() throws -> Date? {
+        guard !values.isEmpty else { throw QuotaError.transient("fixture exhausted") }
+        return try (values.count == 1 ? values[0] : values.removeFirst()).get()
+    }
+}
+
+@Test func refresherTreatsSignedOutBeforeStartAndDuringPollingAsNeedsLogin() async throws {
+    let signedOut = QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)
+    let beforePTY = FakeClaudePTY()
+    let before = ClaudeCLIRefresher(credentialsPresent: { true },
+        expiryReader: SignedOutExpiryReader([.failure(signedOut)]), makePTY: { beforePTY },
+        locate: { URL(fileURLWithPath: "/fixture/claude") })
+    #expect(await before.refresh(force: true) == .needsLogin)
+    #expect(await beforePTY.starts == 0)
+    #expect(await beforePTY.messages.isEmpty)
+
+    let clock = FakeQuotaClock(), pollingPTY = FakeClaudePTY()
+    let polling = ClaudeCLIRefresher(credentialsPresent: { true },
+        expiryReader: SignedOutExpiryReader([.success(.distantPast), .failure(signedOut)]),
+        makePTY: { pollingPTY }, locate: { URL(fileURLWithPath: "/fixture/claude") }, clock: clock)
+    let task = Task { await polling.refresh(force: true) }
+    try await eventually {
+        let messages = await pollingPTY.messages
+        return clock.pending == 3 && messages == ["/usage\r"]
+    }
+    clock.advance(0.5)
+    #expect(await task.value == .needsLogin)
+    #expect(await pollingPTY.starts == 1)
+    #expect(await pollingPTY.messages == ["/usage\r", "\u{1b}", "/exit\r"])
 }
 
 @Test func refreshSingleFlight() async throws {

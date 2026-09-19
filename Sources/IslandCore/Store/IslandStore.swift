@@ -100,6 +100,7 @@ import Foundation
     public var warningThreshold: Double = 70
     public var criticalThreshold: Double = 90
     public var quotaDisplayMode: QuotaDisplayMode = .remaining
+    public var collapsedStyle: CollapsedStyle = .hidden
     public var wingWidth: Double = 76
     public var expandedSessionIDs: Set<String> = []
     @ObservationIgnored private let quotaService: (any QuotaServicing)?
@@ -254,7 +255,10 @@ import Foundation
         }
     }
     public var layoutConfig: IslandLayoutConfig {
-        var config = IslandLayoutConfig(); config.wingWidth = effectiveWingWidth; return config
+        var config = IslandLayoutConfig()
+        config.collapsedStyle = collapsedStyle
+        config.wingWidth = effectiveWingWidth
+        return config
     }
     /// The user's wing width, widened when the collapsed content needs more room.
     /// Only a pair of provider quota wings (glyph + percentage) may use the compact minimum;

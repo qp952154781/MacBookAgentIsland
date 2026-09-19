@@ -22,6 +22,10 @@ import IslandCore
         await officialGlyphs.refresh()
         await fallbackGlyphs.refresh()
         var cases: [(String, MockScenario, IslandMode, Bool)] = [
+            ("collapsed-hidden", .idle, .collapsed, true),
+            ("collapsed-hidden-capsule", .idle, .collapsed, false),
+            ("active-hidden", .busy, .active, true),
+            ("claude-signed-out", .idle, .expanded, true),
             ("collapsed-idle", .idle, .collapsed, true), ("collapsed-badge", .busy, .active, true), ("collapsed-active", .busy, .active, true),
             ("collapsed-both-active", .busy, .active, true),
             ("active-determinate", .busy, .active, true),
@@ -85,14 +89,14 @@ import IslandCore
             cases.append((name, .idle, mode, true))
         }
         for hasNotch in [true, false] {
-            for width in [600, 900] {
+            for width in [600, 760] {
                 for load in ["warning", "critical"] {
                     cases.append(("system-gpu-\(width)-\(hasNotch ? "notch" : "capsule")-\(load)", .idle, .expanded, hasNotch))
                 }
             }
         }
         for hasNotch in [true, false] {
-            for width in [600, 900] {
+            for width in [600, 760] {
                 for percent in [9, 100] {
                     cases.append(("top-band-\(width)-\(hasNotch ? "notch" : "capsule")-\(percent)", .idle, .expanded, hasNotch))
                 }
@@ -117,6 +121,10 @@ import IslandCore
         var files: [String: Data] = [:]
         for (name, scenario, mode, hasNotch) in cases {
             let store = IslandStore.mock(scenario, now: now)
+            // Legacy collapsed/active scenes intentionally preserve their pixel baseline.
+            if mode != .expanded, !["collapsed-hidden", "collapsed-hidden-capsule", "active-hidden"].contains(name) {
+                store.collapsedStyle = .wings
+            }
             store.systemMetrics = SystemMetrics(
                 network: .init(downBytesPerSec: 2.5 * 1024 * 1024, upBytesPerSec: 180 * 1024, interfaces: ["en0"]),
                 fan: .init(fans: [.init(index: 0, rpm: 2507, minRPM: 2317, maxRPM: 6550)]),
@@ -151,12 +159,14 @@ import IslandCore
             case "expanded-system-stopped":
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: 0, minRPM: 0, maxRPM: 6550)])
             case "expanded-system-disabled": store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, gpu: false)
-            case "expanded-refreshing", "expanded-recovering", "expanded-recovering-empty", "expanded-setup", "expanded-login":
+            case "expanded-refreshing", "expanded-recovering", "expanded-recovering-empty", "expanded-setup", "expanded-login", "claude-signed-out":
                 var status = ClaudeConnectionStatus()
                 status.isRefreshing = name == "expanded-refreshing"
                 status.isRecovering = name.contains("recovering") || status.isRefreshing
                 status.requiresUserAction = !status.isRecovering
-                status.result = name == "expanded-setup" ? .needsUserSetup("需要在终端完成一次 Claude Code 首次设置") : name == "expanded-login" ? .needsLogin : nil
+                status.result = name == "expanded-setup" ? .needsUserSetup("需要在终端完成一次 Claude Code 首次设置")
+                    : (name == "expanded-login" || name == "claude-signed-out") ? .needsLogin : nil
+                if name == "claude-signed-out" { status.credentialsMissing = false }
                 store.claudeConnection = status
                 if name == "expanded-recovering-empty" { store.quotas[.claude] = nil }
                 store.quotas[.claude]?.fetchedAt = now.addingTimeInterval(-720)
@@ -215,7 +225,7 @@ import IslandCore
             var notch = metrics(hasNotch: hasNotch)
             if name.hasPrefix("top-band-") {
                 let percent = name.hasSuffix("-9") ? 9 : 100
-                store.sessionListLayout = name.contains("900") ? .twoColumns : .singleColumn
+                store.sessionListLayout = name.contains("760") ? .twoColumns : .singleColumn
                 store.systemMetrics.cpu = .init(percent: Double(percent), sampleIntervalMs: 1000)
                 store.systemMetrics.gpu = .init(percent: Double(percent))
                 store.systemMetrics.memory = .init(usedBytes: UInt64(percent), totalBytes: 100)
@@ -225,7 +235,7 @@ import IslandCore
             }
             if name.hasPrefix("system-gpu-") {
                 store.systemMetrics.gpu = .init(percent: name.hasSuffix("critical") ? 97 : 85)
-                store.sessionListLayout = name.contains("900") ? .twoColumns : .singleColumn
+                store.sessionListLayout = name.contains("760") ? .twoColumns : .singleColumn
                 if name.hasSuffix("unavailable") { store.systemMetrics.gpu = nil }
                 if name.hasSuffix("no-fan") {
                     // Synthetic narrower notch gives three metrics room in a 600 pt panel.
@@ -253,7 +263,7 @@ import IslandCore
                     store.claudeConnection = status
                 }
                 if name == "sessions-grid-narrow" || name == "sessions-grid-capped" {
-                    let width: CGFloat = name == "sessions-grid-narrow" ? 860 : 938
+                    let width: CGFloat = 807
                     notch.visibleFrame = CGRect(x: notch.notchRect.midX - width / 2, y: 0, width: width, height: 900)
                 }
             }
@@ -269,7 +279,7 @@ import IslandCore
                     store.expandedSessionIDs = Set(groups.compactMap { $0.first?.id })
                 }
                 if name.contains("narrow") {
-                    notch.visibleFrame = CGRect(x: notch.notchRect.midX - 430, y: 0, width: 860, height: 900)
+                    notch.visibleFrame = CGRect(x: notch.notchRect.midX - 403.5, y: 0, width: 807, height: 900)
                 }
             }
             for debug in [false, true] {
@@ -405,7 +415,7 @@ import IslandCore
             store.health[balance.id] = .ok
             store.health[team.id] = .ok
         } else {
-            // Eight non-ended sessions select the automatic 900 pt layout on the synthetic notch display.
+            // Eight non-ended sessions select the automatic 760 pt layout on the synthetic notch display.
             // Each column's first three rows cover running, thinking, and waiting for input.
             let examples: [(ProviderID, String, String, SessionPhase, String)] = [
                 (.claude, "重构登录模块", "web-app", .runningTool, "编辑登录表单"),

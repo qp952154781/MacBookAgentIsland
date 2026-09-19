@@ -15,13 +15,17 @@ public struct ClaudeCredential: Decodable, Sendable, CustomStringConvertible, Cu
             let root = try decoder.container(keyedBy: RootKeys.self)
             let values = try root.nestedContainer(keyedBy: Keys.self, forKey: .claudeAiOauth)
             let token = try values.decode(String.self, forKey: .accessToken)
-            guard !token.isEmpty, !token.contains("\r"), !token.contains("\n") else { throw QuotaError.decoding("Claude 凭据格式无效") }
+            guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)
+            }
+            guard !token.contains("\r"), !token.contains("\n") else { throw QuotaError.decoding("Claude 凭据格式无效") }
             accessToken = token
             expiresAt = (try? values.decode(Double.self, forKey: .expiresAt)).flatMap(DateParsing.unixMilliseconds)
             subscriptionType = try? values.decode(String.self, forKey: .subscriptionType)
             rateLimitTier = try? values.decode(String.self, forKey: .rateLimitTier)
             scopes = (try? values.decode([String].self, forKey: .scopes)) ?? []
-        } catch { throw QuotaError.decoding("Claude 凭据格式无效") }
+        } catch let error as QuotaError { throw error }
+        catch { throw QuotaError.decoding("Claude 凭据格式无效") }
     }
     public var description: String { "ClaudeCredential(<redacted>)" }
     public var debugDescription: String { description }
@@ -45,6 +49,10 @@ public struct ClaudeCredential: Decodable, Sendable, CustomStringConvertible, Cu
 public actor ClaudeCredentialStore {
     public static let loginMessage = "在终端运行一次 claude auth login 以连接 Claude 额度"
     public static let expiredMessage = "Claude 登录已过期，请在终端重新运行 claude auth login"
+    public static let signedOutMessage = "Claude 已退出登录，请重新运行 claude auth login"
+    public static func isSignedOut(_ error: any Error) -> Bool {
+        error as? QuotaError == .unauthorized(signedOutMessage)
+    }
     private let executor: any QuotaCommandExecuting
     private let readFallback: @Sendable () async throws -> Data?
     private let now: @Sendable () -> Date
@@ -115,6 +123,7 @@ public actor ClaudeCredentialStore {
         else { throw QuotaError.transient("无法读取 Claude 登录信息") }
         let credential: ClaudeCredential
         do { credential = try JSONDecoder().decode(ClaudeCredential.self, from: data) }
+        catch let error as QuotaError { throw error }
         catch { throw QuotaError.decoding("Claude 凭据格式无效") }
         try Task.checkCancellation()
         return credential
@@ -131,10 +140,26 @@ public struct ClaudeKeychainExpiryReader: ClaudeExpiryReading {
         if output.exitCode == 44 || output.itemNotFound { return nil }
         guard output.exitCode == 0 else { throw QuotaError.transient("无法读取 Claude 登录有效期") }
         struct Envelope: Decodable {
-            struct OAuth: Decodable { let expiresAt: Double? }
+            struct OAuth: Decodable {
+                let expiresAt: Double?
+                let signedOut: Bool
+                private enum CodingKeys: String, CodingKey { case accessToken, expiresAt }
+                init(from decoder: any Decoder) throws {
+                    let values = try decoder.container(keyedBy: CodingKeys.self)
+                    let token = try values.decode(String.self, forKey: .accessToken)
+                    signedOut = token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    expiresAt = try? values.decode(Double.self, forKey: .expiresAt)
+                }
+            }
             let claudeAiOauth: OAuth
         }
-        guard let value = try? JSONDecoder().decode(Envelope.self, from: output.stdout) else {
+        let value: Envelope
+        do { value = try JSONDecoder().decode(Envelope.self, from: output.stdout) }
+        catch { throw QuotaError.decoding("Claude 登录有效期格式无效") }
+        if value.claudeAiOauth.signedOut {
+            throw QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)
+        }
+        guard !output.stdout.isEmpty else {
             throw QuotaError.decoding("Claude 登录有效期格式无效")
         }
         return value.claudeAiOauth.expiresAt.flatMap(DateParsing.unixMilliseconds)

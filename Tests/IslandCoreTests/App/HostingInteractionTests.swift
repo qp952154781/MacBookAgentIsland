@@ -11,18 +11,18 @@ import IslandCore
     model.setExpansionMethod(.click)
     let host = IslandHostingView(rootView: IslandRootView(store: model.store,
         notch: SnapshotExporter.metrics(hasNotch: true), mode: .collapsed))
-    host.frame = NSRect(x: 0, y: 0, width: 337, height: 32)
+    host.frame = NSRect(x: 0, y: 0, width: 183, height: 31)
     host.primaryClick = { model.togglePinned() }
     let panel = NotchPanel(frame: host.frame)
     panel.contentView = host
     defer { panel.close() }
     host.layoutSubtreeIfNeeded()
     #expect(!panel.canBecomeKey && !panel.canBecomeMain)
-    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 30, y: 16),
+    let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 90, y: 15),
         modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     #expect(host.window?.isKeyWindow != true)
     #expect(host.acceptsFirstMouse(for: event))
-    #expect(host.hitTest(NSPoint(x: 30, y: 16)) === host)
+    #expect(host.hitTest(NSPoint(x: 90, y: 15)) === host)
     host.mouseDown(with: event)
     #expect(model.mode == .expanded)
     #expect(model.interaction.pinned)
@@ -62,7 +62,7 @@ import IslandCore
     }
     let host = NSHostingView(rootView: ExpandedView(store: store, now: .now, availableHeight: 368, columns: columns,
                                                    animationsVisible: false))
-    host.frame = NSRect(x: 0, y: 0, width: columns == 2 ? 900 : 600, height: 368)
+    host.frame = NSRect(x: 0, y: 0, width: columns == 2 ? 760 : 600, height: 368)
     let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.contentView = host
@@ -96,6 +96,7 @@ import IslandCore
     var body: some View {
         IslandRootView(store: model.store, notch: notch, mode: model.mode,
                        animationsVisible: false, refresh: refresh, settings: settings)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .transaction { $0.disablesAnimations = true }
     }
 }
@@ -123,22 +124,34 @@ import IslandCore
             refresh: { [weak self] in self?.refreshCount += 1 },
             settings: { [weak self] in self?.settingsCount += 1 }), geometry: host.interactionGeometry)
         host.primaryClick = { [weak model] in model?.togglePinned() }
+        host.targetInteractionContains = { [weak self] point in self?.targetShapeContains(point) == true }
         host.autoresizingMask = [.width, .height]
         panel.contentView = host
         panel.ignoresMouseEvents = false
     }
 
     func layout() async throws {
-        let size = IslandLayout.size(for: model.mode, notch: notch, config: ExpandedView.layoutConfig(store: model.store, notch: notch),
+        let config = ExpandedView.layoutConfig(store: model.store, notch: notch)
+        let size = IslandLayout.size(for: model.mode, notch: notch, config: config,
             expandedContentHeight: ExpandedView.contentHeight(store: model.store, notch: notch))
-        let canvas = NSSize(width: size.width + (model.mode == .expanded ? 48 : 0),
-                            height: size.height + (model.mode == .expanded ? 36 : 0))
+        let canvas = IslandMotion.targetCanvas(shape: size, mode: model.mode,
+            fixedWidth: IslandLayout.canvasWidth(notch: notch, config: config))
         panel.setFrame(NSRect(origin: NSPoint(x: -10000, y: -10000), size: canvas), display: false)
         panel.orderFrontRegardless()
         host.frame = NSRect(origin: .zero, size: canvas)
         host.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(50))
         host.layoutSubtreeIfNeeded()
+    }
+
+    private func targetShapeContains(_ point: CGPoint) -> Bool {
+        let config = ExpandedView.layoutConfig(store: model.store, notch: notch)
+        let size = IslandLayout.size(for: model.mode, notch: notch, config: config,
+            expandedContentHeight: ExpandedView.contentHeight(store: model.store, notch: notch))
+        let rect = CGRect(x: (host.bounds.width - size.width) / 2, y: 0, width: size.width, height: size.height)
+        let shape = NotchShape(bottomRadius: model.mode == .expanded ? config.expandedBottomRadius : config.collapsedBottomRadius,
+                               earRadius: notch.hasNotch ? config.earRadius : 0)
+        return shape.path(in: rect).contains(point)
     }
 
     func rect(_ id: String) throws -> CGRect {
@@ -190,7 +203,8 @@ import IslandCore
     #expect(!fixture.panel.isKeyWindow)
     model.setExpansionMethod(.click)
     try await fixture.layout()
-    try fixture.click(NSPoint(x: 30, y: 16))
+    let collapsedShape = try fixture.shapeRect()
+    try fixture.click(NSPoint(x: collapsedShape.midX, y: collapsedShape.midY))
     #expect(model.mode == .expanded)
     #expect(model.interaction.pinned)
     try await fixture.layout()
@@ -254,6 +268,7 @@ import IslandCore
             let points = [NSPoint(x: rect.minX + 1, y: rect.maxY - 1),
                           NSPoint(x: 1, y: fixture.host.bounds.height - 1)]
             for point in points {
+                #expect(fixture.host.bounds.contains(point))
                 #expect(!fixture.host.interactionGeometry.contains(point))
                 let local = NSPoint(x: point.x, y: fixture.host.isFlipped ? point.y : fixture.host.bounds.height - point.y)
                 #expect(fixture.host.hitTest(fixture.host.convert(local, to: fixture.host.superview)) == nil)

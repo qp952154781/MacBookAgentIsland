@@ -17,6 +17,9 @@ import IslandCore
     private var stopped = false
     private var observing = false
     private var resizeTask: Task<Void, Never>?
+    private var canvasTargetMode: IslandMode?
+    private var canvasHold: IslandCanvasHold?
+    private var fixedCanvasWidth: CGFloat?
     private var presentationObservation: NSKeyValueObservation?
 
     init(model: IslandViewModel, settings: AppSettings, connection: ConnectionActions) {
@@ -44,11 +47,18 @@ import IslandCore
         let notch = geometry.metrics
         self.notch = notch
         screen = geometry.screen
+        fixedCanvasWidth = IslandLayout.canvasWidth(
+            notch: notch, config: ExpandedView.layoutConfig(store: model.store, notch: notch)
+        )
         let panel = self.panel ?? NotchPanel(frame: .zero)
         self.panel = panel
         updateFrame()
         let host = IslandHostingView(rootView: LiveIslandView(model: model, notch: notch, openSettings: openSettings, connection: connection,
                                                               geometryChanged: { [weak self] in self?.updateFrame(); self?.hover?.refreshGeometry() }))
+        host.targetInteractionContains = { [weak self, weak host] point in
+            guard let self, let host else { return false }
+            return self.targetShapeContains(point, canvas: host.bounds.size)
+        }
         host.primaryClick = { [weak model] in model?.togglePinned() }
         host.contextMenuProvider = { [weak self] in self?.makeMenu() }
         host.frame = CGRect(origin: .zero, size: panel.frame.size)
@@ -62,27 +72,43 @@ import IslandCore
     }
 
     private func updateFrame(settled: Bool = false) {
-        guard let notch, let panel else { return }
+        guard let notch, let panel, let fixedCanvasWidth else { return }
         let size = IslandLayout.size(for: model.mode, notch: notch, config: ExpandedView.layoutConfig(store: model.store, notch: notch),
                                     expandedContentHeight: ExpandedView.contentHeight(store: model.store, notch: notch))
-        // Retain shadow space only while expanded; collapsed backing stores are just 337 × 36 pt.
-        var canvas = CGSize(width: size.width + (model.mode == .expanded ? 48 : 0),
-                            height: size.height + (model.mode == .expanded ? 36 : 0))
+        let targetCanvas = IslandMotion.targetCanvas(shape: size, mode: model.mode, fixedWidth: fixedCanvasWidth)
+        let previousMode = canvasTargetMode ?? model.mode
+        canvasTargetMode = model.mode
         resizeTask?.cancel()
-        // Keep the old backing width until the SwiftUI spring finishes shrinking.
-        // Growth gets its full canvas immediately, with the shape animating inside it.
-        if !settled, model.mode == .expanded, panel.frame.width > canvas.width,
-           panel.frame.width <= IslandLayout.maximumCenteredWidth(notch: notch) + 48 {
-            canvas.width = panel.frame.width
+        let now = ProcessInfo.processInfo.systemUptime
+        let decision = IslandMotion.canvasDecision(
+            oldMode: previousMode, newMode: model.mode, currentCanvas: panel.frame.size,
+            targetCanvas: targetCanvas, hold: canvasHold, now: now, settled: settled
+        )
+        canvasHold = decision.hold
+        if let hold = decision.hold {
             resizeTask = Task { [weak self] in
-                do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+                do { try await Task.sleep(for: .seconds(max(0, hold.until - ProcessInfo.processInfo.systemUptime))) }
+                catch { return }
+                guard self?.canvasHold == hold else { return }
                 self?.updateFrame(settled: true)
                 self?.hover?.refreshGeometry()
             }
         }
+        let canvas = decision.canvas
         let frame = CGRect(x: notch.notchRect.midX - canvas.width / 2, y: notch.screenFrame.maxY - canvas.height,
                            width: canvas.width, height: canvas.height)
         if panel.frame != frame { panel.setFrame(frame, display: true) }
+    }
+
+    private func targetShapeContains(_ point: CGPoint, canvas: CGSize) -> Bool {
+        guard let notch else { return false }
+        let config = ExpandedView.layoutConfig(store: model.store, notch: notch)
+        let size = IslandLayout.size(for: model.mode, notch: notch, config: config,
+                                     expandedContentHeight: ExpandedView.contentHeight(store: model.store, notch: notch))
+        let rect = CGRect(x: (canvas.width - size.width) / 2, y: 0, width: size.width, height: size.height)
+        let shape = NotchShape(bottomRadius: model.mode == .expanded ? config.expandedBottomRadius : config.collapsedBottomRadius,
+                               earRadius: notch.hasNotch ? config.earRadius : 0)
+        return shape.path(in: rect).contains(point)
     }
 
     // Geometry follows Store changes directly, including the first activity frame.
@@ -92,6 +118,7 @@ import IslandCore
         withObservationTracking {
             _ = model.mode
             _ = model.store.wingWidth
+            _ = model.store.collapsedStyle
             _ = model.store.sessionLayout(notch: notch)
             _ = ExpandedView.contentHeight(store: model.store, notch: notch)
         } onChange: { [weak self] in
@@ -176,6 +203,7 @@ import IslandCore
 final class IslandHostingView<Content: View>: NSHostingView<IslandInteractionCanvas<Content>> {
     let interactionGeometry: IslandInteractionGeometry
     var primaryClick: (() -> Void)?
+    var targetInteractionContains: ((CGPoint) -> Bool)?
 
     init(rootView: Content) {
         let geometry = IslandInteractionGeometry()
@@ -195,7 +223,8 @@ final class IslandHostingView<Content: View>: NSHostingView<IslandInteractionCan
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         let canvas = canvasPoint(local)
-        guard bounds.contains(local), interactionGeometry.contains(canvas) else { return nil }
+        let contains = targetInteractionContains?(canvas) ?? interactionGeometry.contains(canvas)
+        guard bounds.contains(local), contains else { return nil }
         // Scroll wheels must reach the native scroll view even over non-control content.
         let eventType = (window as? NotchPanel)?.routingEventType ?? NSApp.currentEvent?.type
         if eventType == .scrollWheel || interactionGeometry.isControl(canvas) {
@@ -206,7 +235,8 @@ final class IslandHostingView<Content: View>: NSHostingView<IslandInteractionCan
 
     override func mouseDown(with event: NSEvent) {
         let point = canvasPoint(convert(event.locationInWindow, from: nil))
-        guard interactionGeometry.contains(point), !interactionGeometry.isControl(point) else { return }
+        let contains = targetInteractionContains?(point) ?? interactionGeometry.contains(point)
+        guard contains, !interactionGeometry.isControl(point) else { return }
         primaryClick?()
     }
     var contextMenuProvider: (() -> NSMenu?)?
@@ -223,16 +253,22 @@ private struct LiveIslandView: View {
     let openSettings: () -> Void
     let connection: ConnectionActions
     let geometryChanged: () -> Void
+    @State private var timelineNow = Date()
     var body: some View {
-        Group {
-            if model.mode == .expanded && model.animationsVisible {
-                TimelineView(.periodic(from: .now, by: 60)) { context in island(now: context.date) }
-            } else { island(now: .now) }
-        }
+        island(now: timelineNow)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: model.mode) { await BrandGlyphLoader.shared.refresh() }
+        .task(id: model.mode == .expanded && model.animationsVisible) {
+            timelineNow = .now
+            guard model.mode == .expanded, model.animationsVisible else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                timelineNow = .now
+            }
+        }
         .onChange(of: model.mode) { geometryChanged() }
         .onChange(of: model.store.wingWidth) { geometryChanged() }
+        .onChange(of: model.store.collapsedStyle) { geometryChanged() }
         .onChange(of: model.store.sessionLayout(notch: notch)) { geometryChanged() }
         .onChange(of: ExpandedView.contentHeight(store: model.store, notch: notch)) { geometryChanged() }
 

@@ -117,11 +117,14 @@ private actor StoreSessionService: SessionServicing {
     let store = IslandStore()
     #expect(settings.refreshInterval == 120 && settings.activeMinutes == 30)
     #expect(settings.expansionMethod == .hover && !settings.useMainScreen && !settings.showInFullscreen)
+    #expect(settings.collapsedStyle == .hidden)
     settings.onChange = { settings.apply(to: store) }
     settings.wingWidth = 100
+    settings.collapsedStyle = .wings
     settings.warningThreshold = 55
     settings.criticalThreshold = 85
     #expect(store.layoutConfig.wingWidth == 100)
+    #expect(store.collapsedStyle == .wings && store.layoutConfig.collapsedStyle == .wings)
     #expect(store.warningThreshold == 55 && store.criticalThreshold == 85)
     settings.onChange = nil
 }
@@ -173,6 +176,19 @@ private actor StoreSessionService: SessionServicing {
     #expect(AppSettings(defaults: WingSettingsDefaults(["wingWidth": 120.0])).wingWidth == 100)
 }
 
+@MainActor @Test func collapsedStylePersistsAndUnknownValuesUseHiddenDefault() {
+    let defaults = WingSettingsDefaults([:])
+    #expect(AppSettings(defaults: defaults).collapsedStyle == .hidden)
+    let settings = AppSettings(defaults: defaults)
+    for style in CollapsedStyle.allCases {
+        settings.collapsedStyle = style
+        #expect(defaults.string(forKey: "collapsedStyle") == style.rawValue)
+        #expect(AppSettings(defaults: defaults).collapsedStyle == style)
+    }
+    defaults.values["collapsedStyle"] = "future-style"
+    #expect(AppSettings(defaults: defaults).collapsedStyle == .hidden)
+}
+
 @MainActor @Test func onlyPairedQuotaWingsUseTheCompactMinimum() {
     let store = IslandStore.mock(.idle)
     store.wingWidth = IslandLayout.minimumWingWidth
@@ -189,4 +205,3 @@ private actor StoreSessionService: SessionServicing {
     store.wingWidth = 80
     #expect(store.effectiveWingWidth == 80)
 }
-

@@ -13,6 +13,7 @@ public enum SessionListLayoutMode: String, CaseIterable, Sendable {
 }
 
 public struct SessionListLayout: Equatable, Sendable {
+    public static let twoColumnWidth: CGFloat = 760
     public static let rowHeight: CGFloat = 44
     public static let detailHeight: CGFloat = 64
     public static let columnSpacing: CGFloat = 16
@@ -25,8 +26,8 @@ public struct SessionListLayout: Equatable, Sendable {
         // Automatic keeps Claude and Codex apart whenever there is anything to show;
         // with no active sessions a single empty-state line reads better than two placeholders.
         let wantsTwo = mode == .twoColumns || (mode == .automatic && activeCount >= 1)
-        columns = wantsTwo && limit >= 880 ? 2 : 1
-        width = min(columns == 2 ? 900 : singleColumnWidth, limit)
+        columns = wantsTwo && limit >= Self.twoColumnWidth ? 2 : 1
+        width = min(columns == 2 ? Self.twoColumnWidth : singleColumnWidth, limit)
     }
 
     public static func rowHeights(sessions: [AgentSession], expandedIDs: Set<String>) -> [CGFloat] {

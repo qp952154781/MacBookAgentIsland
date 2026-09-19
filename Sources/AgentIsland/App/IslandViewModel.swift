@@ -3,7 +3,7 @@ import IslandCore
 
 @MainActor @Observable final class IslandViewModel {
     let store: IslandStore
-    let forcedState: IslandMode?
+    private(set) var forcedState: IslandMode?
     private(set) var interaction = IslandInteraction()
     var animationsVisible = true { didSet { updateSystemMetrics() } }
     @ObservationIgnored private var systemMonitor: SystemMetricsMonitor?
@@ -19,6 +19,12 @@ import IslandCore
         self.store = store
         self.forcedState = forcedState
         store.onProviderChange = { [weak self] in self?.updateSystemMetrics() }
+    }
+
+    /// Development aid for `--cycle-states`: drives the same mode transitions a hover would.
+    func setForcedState(_ state: IslandMode?) {
+        forcedState = state
+        updateSystemMetrics()
     }
 
     func setExpansionMethod(_ method: ExpansionMethod) {
@@ -62,7 +68,8 @@ import IslandCore
 
     func updateSystemMetrics(reset: Bool = false) {
         let collapsed = store.collapsedMetricOptions
-        let needsSampling = mode == .expanded || collapsed.enabled
+        let showsCollapsedMetrics = store.collapsedStyle == .wings && collapsed.enabled
+        let needsSampling = mode == .expanded || showsCollapsedMetrics
         let options = mode == .expanded || !collapsed.enabled ? store.expandedMetricOptions : collapsed
         systemMonitor?.update(expanded: animationsVisible && needsSampling, options: options, reset: reset)
     }

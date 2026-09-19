@@ -14,6 +14,7 @@ struct LaunchOptions {
     var snapshotDirectory: String?
     var mockScenario: MockScenario?
     var forcedState: IslandMode?
+    var cycleStates: TimeInterval?
     var exitAfter: TimeInterval?
     var dump: String?
     var loginItem: LoginItemAction?
@@ -30,6 +31,7 @@ struct LaunchOptions {
       --mock idle|busy|critical|disconnected|no-credentials  使用模拟数据
         disconnected：有凭据、连接恢复中；no-credentials：无凭据、显示登录指引。
       --force-state collapsed|active|expanded  固定显示状态
+      --cycle-states <秒>  在收起与展开之间循环切换（动画验收用）
       --exit-after <秒>  限时退出
       --print-geometry  打印屏幕几何
       --measure  限时测量
@@ -73,6 +75,11 @@ struct LaunchOptions {
             case "--force-state":
                 guard let state = IslandMode(rawValue: try value(after: flag)) else { throw ParseError.invalid("无效的岛状态") }
                 forcedState = state
+            case "--cycle-states":
+                guard let seconds = Double(try value(after: flag)), seconds.isFinite, (0.3...30).contains(seconds) else {
+                    throw ParseError.invalid("循环间隔必须在 0.3 到 30 秒之间")
+                }
+                cycleStates = seconds
             case "--exit-after":
                 guard let seconds = Double(try value(after: flag)), seconds.isFinite, seconds >= 0 else {
                     throw ParseError.invalid("退出时间必须为非负秒数")
@@ -86,11 +93,12 @@ struct LaunchOptions {
             }
             index += 1
         }
+        if cycleStates != nil, forcedState != nil { throw ParseError.invalid("--cycle-states 不能与 --force-state 同时使用") }
         if home != nil, dump == nil { throw ParseError.invalid("--home 仅供 --dump 诊断使用，GUI 模式不接受此参数") }
         let auditModes = [printGeometry, snapshotDirectory != nil, dump != nil, measure].filter { $0 }.count
         guard auditModes <= 1 else { throw ParseError.invalid("几何、快照、测量与数据导出模式不能同时使用") }
         if loginItem != nil {
-            guard auditModes == 0, mockScenario == nil, forcedState == nil else {
+            guard auditModes == 0, mockScenario == nil, forcedState == nil, cycleStates == nil else {
                 throw ParseError.invalid("--login-item 不能与其它运行模式同时使用")
             }
         }

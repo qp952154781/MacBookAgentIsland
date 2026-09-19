@@ -8,7 +8,7 @@ public actor ClaudeDiagnostics {
         case sleep, wake, lock, unlock, displaySleep, displayWake, watchdog, retry
     }
     public enum Category: String, Codable, Sendable {
-        case ok, transient, unauthorized, notConfigured, decoding, cancelled, timeout
+        case ok, transient, unauthorized, signedOut, notConfigured, decoding, cancelled, timeout
         case blocked, cooldown, window, credentialChanged, cliChanged
         case refreshed, alreadyFresh, needsUserSetup, needsLogin, failed
         case stale, needsSetup, disabled, fetch, refresh
@@ -78,6 +78,7 @@ public actor ClaudeDiagnostics {
     }
     static func category(_ error: any Error) -> Category {
         if error is CancellationError { return .cancelled }
+        if ClaudeCredentialStore.isSignedOut(error) { return .signedOut }
         switch error as? QuotaError {
         case .unauthorized: return .unauthorized
         case .notConfigured: return .notConfigured
