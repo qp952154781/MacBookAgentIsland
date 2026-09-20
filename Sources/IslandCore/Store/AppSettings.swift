@@ -49,6 +49,7 @@ extension UserDefaults: AppSettingsDefaults {}
     public var useMainScreen: Bool { didSet { persist() } }
     public var showInFullscreen: Bool { didSet { persist() } }
     public var launchAtLogin: Bool { didSet { persist() } }
+    public var claudeAutoRefresh: Bool { didSet { persist() } }
     public var activeMinutes: Int { didSet { persist() } }
     public var sessionListLayout: SessionListLayoutMode { didSet { persist() } }
     @ObservationIgnored private let defaults: (any AppSettingsDefaults)?
@@ -87,13 +88,15 @@ extension UserDefaults: AppSettingsDefaults {}
         useMainScreen = flag("useMainScreen", false)
         showInFullscreen = flag("showInFullscreen", false)
         launchAtLogin = flag("launchAtLogin", false)
+        claudeAutoRefresh = flag("claudeAutoRefresh", true)
         let active = number("activeMinutes", 30)
         activeMinutes = [15, 30, 60].contains(active) ? Int(active) : 30
     }
     private func persist() {
         let values: [String: Any] = ["showGPU": showGPU, "showCPU": showCPU, "showNetwork": showNetwork, "showFan": showFan, "showMemory": showMemory, "refreshInterval": refreshInterval, "warningThreshold": warningThreshold,
             "criticalThreshold": criticalThreshold, "wingWidth": wingWidth, "useMainScreen": useMainScreen,
-            "showInFullscreen": showInFullscreen, "launchAtLogin": launchAtLogin, "activeMinutes": activeMinutes,
+            "showInFullscreen": showInFullscreen, "launchAtLogin": launchAtLogin,
+            "claudeAutoRefresh": claudeAutoRefresh, "activeMinutes": activeMinutes,
             "expansionMethod": expansionMethod.rawValue, "quotaDisplayMode": quotaDisplayMode.rawValue,
             "sessionListLayout": sessionListLayout.rawValue, "collapsedStyle": collapsedStyle.rawValue]
         defaults?.set(try? JSONEncoder().encode(customSources), forKey: "customSources")
@@ -112,5 +115,6 @@ extension UserDefaults: AppSettingsDefaults {}
         store.collapsedStyle = collapsedStyle
         store.warningThreshold = warningThreshold; store.criticalThreshold = criticalThreshold
         store.wingWidth = wingWidth
+        store.claudeAutoRefresh = claudeAutoRefresh
     }
 }

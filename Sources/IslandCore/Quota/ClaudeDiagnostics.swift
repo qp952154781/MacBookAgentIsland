@@ -4,14 +4,17 @@ import Foundation
 public actor ClaudeDiagnostics {
     public enum Event: String, Codable, Sendable {
         case fetchStart, fetchEnd, httpEnd, credentialRead, credentialInvalidated
-        case recoverEnter, recoverSkip, refresherStart, refresherEnd, healthChange
+        case recoverEnter, recoverSkip, refresherStart, refresherEnd, refresherSkip, healthChange
         case sleep, wake, lock, unlock, displaySleep, displayWake, watchdog, retry
     }
     public enum Category: String, Codable, Sendable {
         case ok, transient, unauthorized, signedOut, notConfigured, decoding, cancelled, timeout
-        case blocked, cooldown, window, credentialChanged, cliChanged
+        case blocked, cooldown, window, credentialChanged, cliChanged, network, wakeGrace, backoff
         case refreshed, alreadyFresh, needsUserSetup, needsLogin, failed
         case stale, needsSetup, disabled, fetch, refresh
+    }
+    public enum Reason: String, Codable, Sendable {
+        case earlyExit, timeout, loginScreen, setupScreen, cancelled, failure
     }
     public struct Record: Codable, Sendable {
         public let time: Date
@@ -22,6 +25,7 @@ public actor ClaudeDiagnostics {
         public let expiresAt: Date?
         public let duration: TimeInterval?
         public let previous: Category?
+        public let reason: Reason?
     }
     public static let shared = ClaudeDiagnostics(directory: defaultDirectory)
     public static let disabled = ClaudeDiagnostics(directory: nil)
@@ -35,10 +39,11 @@ public actor ClaudeDiagnostics {
     }
     public func record(_ event: Event, at time: Date = Date(), category: Category? = nil,
                        statusCode: Int? = nil, present: Bool? = nil, expiresAt: Date? = nil,
-                       duration: TimeInterval? = nil, previous: Category? = nil) {
+                       duration: TimeInterval? = nil, previous: Category? = nil, reason: Reason? = nil) {
         guard let directory else { return }
         let record = Record(time: time, event: event, category: category, statusCode: statusCode,
-                            present: present, expiresAt: expiresAt, duration: duration, previous: previous)
+                            present: present, expiresAt: expiresAt, duration: duration, previous: previous,
+                            reason: reason)
         do {
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
             var data = try encoder.encode(record); data.append(10)
@@ -93,6 +98,18 @@ public actor ClaudeDiagnostics {
         case .needsUserSetup: .needsUserSetup
         case .needsLogin: .needsLogin
         case .failed: .failed
+        }
+    }
+    static func reason(_ result: ClaudeRefreshResult) -> Reason? {
+        switch result {
+        case .refreshed, .alreadyFresh: nil
+        case .needsUserSetup: .setupScreen
+        case .needsLogin: .loginScreen
+        case let .failed(message):
+            if message.contains("超时") { .timeout }
+            else if message.contains("取消") { .cancelled }
+            else if message.contains("提前退出") || message.contains("输出中断") { .earlyExit }
+            else { .failure }
         }
     }
     static func category(_ health: ProviderHealth) -> Category {

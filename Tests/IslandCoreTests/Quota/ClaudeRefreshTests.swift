@@ -231,8 +231,8 @@ func refreshCredential(expiry: Double) -> Data {
             http: FakeUsageHTTP([]), now: { clock.now() }, refresher: refresher)
         _ = try? await client.fetchQuota()
         if case .failed = result {
-            for (index, delay) in [120.0, 300, 900].enumerated() {
-                clock.advance(delay - 1); _ = try? await client.fetchQuota()
+            for index in 0..<3 {
+                clock.advance(1799); _ = try? await client.fetchQuota()
                 #expect(await refresher.calls.count == index + 1)
                 clock.advance(1); _ = try? await client.fetchQuota()
                 #expect(await refresher.calls.count == index + 2)

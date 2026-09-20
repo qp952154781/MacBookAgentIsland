@@ -23,7 +23,7 @@ private actor HealingEnvironment: QuotaCommandExecuting, ClaudeRefreshing {
     func configure(_ result: ClaudeRefreshResult) { outcome = result }
     func externalRenewal() { expiry = clock.now().addingTimeInterval(28_800); mdat = clock.now().addingTimeInterval(1) }
     func changeVersion() { version = "2.0" }
-    func modifyEntry() { mdat = mdat.addingTimeInterval(1) }
+    func modifyEntry() { mdat = clock.now() }
     func client(http: any UsageHTTPTransport, diagnostics: ClaudeDiagnostics = .disabled) -> ClaudeOAuthUsageClient {
         ClaudeOAuthUsageClient(credentialsPresent: { true }, credentials: ClaudeCredentialStore(executor: self, now: { self.clock.now() },
             diagnostics: diagnostics, readFallback: { nil }), http: http, now: { self.clock.now() }, refresher: self,
@@ -146,10 +146,8 @@ private actor SignedOutRecoveryEnvironment: QuotaCommandExecuting {
         case "cli": await environment.changeVersion()
         case "manual": await client.retryConnection()
         default:
-            let service = QuotaService(providers: [ClaudeQuotaProvider(client: client)], clock: clock)
-            await service.setSuspended(true); await service.start(); await service.setSuspended(false)
-            try await eventually { await environment.refreshes == 2 }
-            await service.stop()
+            await client.noteSuspension(); await client.noteResume()
+            clock.advance(46)
         }
         _ = try await client.fetchQuota()
         #expect(await environment.refreshes == 2)
@@ -202,8 +200,8 @@ private actor HTTPFirstRefresher: ClaudeRefreshing {
         await environment.configure(result)
         let client = await environment.client(http: try healingHTTP())
         _ = try? await client.fetchQuota()
-        for (index, delay) in [120.0, 300, 900, 1800, 1800, 1800].enumerated() {
-            clock.advance(delay - 1); _ = try? await client.fetchQuota()
+        for index in 0..<6 {
+            clock.advance(1799); _ = try? await client.fetchQuota()
             #expect(await environment.refreshes == index + 1)
             clock.advance(1); _ = try? await client.fetchQuota()
             #expect(await environment.refreshes == index + 2)

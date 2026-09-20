@@ -30,6 +30,7 @@ public enum ClaudeRefreshResult: Sendable, Equatable, Codable {
 }
 
 public struct ClaudeConnectionStatus: Sendable, Equatable, Codable {
+    public static let automaticRefreshDisabledMessage = "Claude 登录已过期，自动续期已关闭"
     public var credentialsMissing: Bool?
     public var isRecovering = false
     public var isRefreshing = false
@@ -38,9 +39,11 @@ public struct ClaudeConnectionStatus: Sendable, Equatable, Codable {
     public var lastAttempt: Date?
     public var nextRetryAt: Date?
     public var result: ClaudeRefreshResult?
-    public init() {}
+    public var autoRefreshEnabled: Bool
+    public init(autoRefreshEnabled: Bool = true) { self.autoRefreshEnabled = autoRefreshEnabled }
     public var recoveryMessage: String {
         if credentialsMissing == true { return "未连接 · 请在终端运行 claude auth login" }
+        if !autoRefreshEnabled, isRecovering { return Self.automaticRefreshDisabledMessage }
         if requiresUserAction, case .needsLogin = result { return "Claude 登录已失效，请重新登录" }
         if requiresUserAction, case .needsUserSetup = result {
             return "请打开终端完成 Claude Code 设置，岛会每 30 分钟自动重试"

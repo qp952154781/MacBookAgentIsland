@@ -8,6 +8,7 @@ private actor StoreQuotaService: QuotaServicing {
     var stops = 0
     var refreshes: [ProviderID?] = []
     var interval: TimeInterval = 0
+    var claudeAutoRefresh: Bool?
     func updates() -> AsyncStream<QuotaUpdate> {
         let pair = AsyncStream<QuotaUpdate>.makeStream()
         continuation = pair.continuation
@@ -17,6 +18,7 @@ private actor StoreQuotaService: QuotaServicing {
     func stop() { stops += 1; continuation?.finish(); continuation = nil }
     func refreshNow(agent: ProviderID?) { refreshes.append(agent) }
     func setInterval(_ seconds: TimeInterval) { interval = seconds }
+    func setClaudeAutoRefresh(_ enabled: Bool) { claudeAutoRefresh = enabled }
     func emit(_ update: QuotaUpdate) { continuation?.yield(update) }
 }
 private actor StoreSessionService: SessionServicing {
@@ -70,8 +72,10 @@ private actor StoreSessionService: SessionServicing {
     try await storeEventually { !store.isRefreshing }
     #expect(store.headline(for: .claude) == nil)
     #expect(store.quotas[.codex] != nil)
-    await store.configure(interval: 120, activeWindow: 900)
+    await store.configure(interval: 120, activeWindow: 900, claudeAutoRefresh: false)
     #expect(await quota.interval == 120)
+    #expect(await quota.claudeAutoRefresh == false)
+    #expect(!store.claudeAutoRefresh)
     #expect(await sessions.window == 900)
     await store.stop()
     #expect(!store.isRunning)

@@ -43,6 +43,9 @@ public protocol QuotaServicing: Sendable {
     func setCustomSources(_ sources: [CustomSource]) async
     func setEnabledProviders(_ ids: [ProviderID]) async
     func retryClaudeConnection() async
+    func setClaudeAutoRefresh(_ enabled: Bool) async
+    func noteClaudeSuspension() async
+    func noteClaudeResume() async
     func updates() async -> AsyncStream<QuotaUpdate>
     func start() async
     func stop() async
@@ -55,6 +58,9 @@ public extension QuotaServicing {
     func setCustomSources(_ sources: [CustomSource]) async {}
     func setEnabledProviders(_ ids: [ProviderID]) async {}
     func retryClaudeConnection() async { await refreshNow(agent: .claude) }
+    func setClaudeAutoRefresh(_ enabled: Bool) async {}
+    func noteClaudeSuspension() async {}
+    func noteClaudeResume() async {}
     func setSuspended(_ suspended: Bool) async {}
 }
 

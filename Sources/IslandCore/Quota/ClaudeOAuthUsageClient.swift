@@ -21,6 +21,10 @@ private final class UsageRedirectBlocker: NSObject, URLSessionTaskDelegate {
     }
 }
 
+private enum CredentialModification: Equatable {
+    case none, ownRefresh, external
+}
+
 public struct EphemeralUsageHTTPTransport: UsageHTTPTransport {
     public init() {}
     public func send(_ request: URLRequest) async throws -> UsageHTTPResponse {
@@ -46,6 +50,7 @@ public actor ClaudeOAuthUsageClient {
     private let now: @Sendable () -> Date
     private let clock: any QuotaClock
     private let diagnostics: ClaudeDiagnostics
+    private let reachability: any ClaudeReachabilityChecking
     private let modificationDate: @Sendable () async throws -> Date?
     private let cliVersion: @Sendable () async -> String?
     private var connection = ClaudeConnectionStatus()
@@ -61,6 +66,16 @@ public actor ClaudeOAuthUsageClient {
     private var observedEnvironment = false
     private var observedModificationDate = false
     private var refreshStarted: Date?
+    private var lastRefreshBeganAt: Date?
+    private var lastRefreshEndedAt: Date?
+    private var autoRefreshEnabled = true
+    private var failureBackoffUntil: Date?
+    private var networkRetryAt: Date?
+    private var networkWaitStarted: Date?
+    private var lastResumeAt: Date?
+    private var resumeCycle = 0
+    private var resumeCycleOpen = false
+    private var refreshedResumeCycle: Int?
     private var signedOut = false
     private var inFlight: Task<QuotaSnapshot, any Error>?
     private var flightID: UUID?
@@ -73,16 +88,19 @@ public actor ClaudeOAuthUsageClient {
                 now: @escaping @Sendable () -> Date = { Date() },
                 refresher: (any ClaudeRefreshing)? = nil,
                 clock: any QuotaClock = SystemQuotaClock(), diagnostics: ClaudeDiagnostics = .disabled,
+                reachability: any ClaudeReachabilityChecking = AssumedClaudeReachability(),
                 modificationDate: @escaping @Sendable () async throws -> Date? = { nil },
                 cliVersion: @escaping @Sendable () async -> String? = { nil }) {
         self.credentialsPresent = credentialsPresent
         self.credentials = credentials; self.http = http; self.now = now; self.clock = clock
-        self.diagnostics = diagnostics; self.modificationDate = modificationDate; self.cliVersion = cliVersion
+        self.diagnostics = diagnostics; self.reachability = reachability
+        self.modificationDate = modificationDate; self.cliVersion = cliVersion
         self.refresher = refresher ?? ClaudeCLIRefresher(expiryReader: ClaudeKeychainExpiryReader(executor: executor),
             locate: locate, diagnostics: diagnostics)
     }
-    public static func live() -> ClaudeOAuthUsageClient {
+    public static func live(reachability: any ClaudeReachabilityChecking = AssumedClaudeReachability()) -> ClaudeOAuthUsageClient {
         ClaudeOAuthUsageClient(credentials: ClaudeCredentialStore(diagnostics: .shared), diagnostics: .shared,
+            reachability: reachability,
             modificationDate: { try await ClaudeKeychainModificationReader().modificationDate() },
             cliVersion: {
                 guard let url = await ExecutableLocator.claudeCLI() else { return nil }
@@ -92,6 +110,25 @@ public actor ClaudeOAuthUsageClient {
             })
     }
     public func status() -> ClaudeConnectionStatus { connection }
+    public func setAutoRefreshEnabled(_ enabled: Bool) async {
+        guard autoRefreshEnabled != enabled else { return }
+        autoRefreshEnabled = enabled
+        connection.autoRefreshEnabled = enabled
+        if enabled {
+            connection.nextRetryAt = nextRefreshDate()
+        } else {
+            networkRetryAt = nil; networkWaitStarted = nil; connection.nextRetryAt = nil
+            if connection.isRefreshing, let inFlight {
+                inFlight.cancel()
+                _ = try? await inFlight.value
+            }
+        }
+    }
+    public func noteSuspension() { resumeCycleOpen = false }
+    public func noteResume() {
+        if !resumeCycleOpen { resumeCycle += 1; resumeCycleOpen = true }
+        lastResumeAt = now()
+    }
     public func retryConnection() async {
         // Finish cancelling the previous attempt before clearing its retry gates.
         // Otherwise its late failure could immediately reinstate a block after manual retry.
@@ -101,7 +138,8 @@ public actor ClaudeOAuthUsageClient {
             _ = try? await inFlight.value
             if flightID == previousID { self.inFlight = nil; flightID = nil }
         }
-        // Explicit retry and lifecycle events also bypass a previous success cooldown.
+        // An explicit user retry bypasses prior recovery gates, except the one-attempt
+        // limit for the current wake cycle.
         resetRecovery()
         signedOut = false
         await diagnostics.record(.retry, at: now())
@@ -109,6 +147,8 @@ public actor ClaudeOAuthUsageClient {
     }
     private func resetRecovery() {
         blocked = false; failures = 0; loginFailures = 0; successCooldown = false
+        failureBackoffUntil = nil; networkRetryAt = nil; networkWaitStarted = nil
+        refreshedResumeCycle = nil
         nextRefresh = .distantPast; connection.nextRetryAt = nil; connection.requiresUserAction = false
     }
     public func fetchQuota(onStatus: @escaping @Sendable (ClaudeConnectionStatus) async -> Void = { _ in }) async throws -> QuotaSnapshot {
@@ -124,10 +164,14 @@ public actor ClaudeOAuthUsageClient {
                 return value
             } catch {
                 if connection.isRefreshing {
-                    await diagnostics.record(.refresherEnd, at: now(), category: error is ClaudeWatchdogTimeout ? .timeout : .cancelled,
-                        duration: refreshStarted.map { max(0, now().timeIntervalSince($0)) })
+                    let timedOut = error is ClaudeWatchdogTimeout
+                    let ended = now()
+                    rememberRefreshWindow(started: refreshStarted, ended: ended)
+                    await diagnostics.record(.refresherEnd, at: ended, category: timedOut ? .timeout : .cancelled,
+                        duration: refreshStarted.map { max(0, now().timeIntervalSince($0)) },
+                        reason: timedOut ? .timeout : .cancelled)
                     refreshStarted = nil
-                    if error is ClaudeWatchdogTimeout { scheduleFailure() }
+                    scheduleFailure()
                 }
                 connection.isRefreshing = false
                 await onStatus(connection)
@@ -140,23 +184,27 @@ public actor ClaudeOAuthUsageClient {
         defer { if flightID == id { inFlight = nil; flightID = nil } }
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
-    private func checkEnvironment(includeCLI: Bool) async throws -> Bool {
-        var credentialChanged = false
+    private func checkEnvironment(includeCLI: Bool) async throws -> CredentialModification {
+        var credentialModification = CredentialModification.none
         // Run once per quota poll. The attribute query never uses -w.
         do {
             let modification = try await modificationDate()
             try Task.checkCancellation()
             if observedModificationDate, modification != observedModification {
-                resetRecovery(); await credentials.invalidate()
-                credentialChanged = true
-                await diagnostics.record(.retry, at: now(), category: .credentialChanged)
+                let ownRefresh = modification.map(isOwnRefreshModification) ?? false
+                credentialModification = ownRefresh ? .ownRefresh : .external
+                if !ownRefresh {
+                    resetRecovery()
+                    await diagnostics.record(.retry, at: now(), category: .credentialChanged)
+                }
+                await credentials.invalidate()
             }
             observedModification = modification; observedModificationDate = true
         } catch {
             try Task.checkCancellation()
             await diagnostics.record(.credentialRead, at: now(), category: .transient)
         }
-        guard includeCLI else { return credentialChanged }
+        guard includeCLI else { return credentialModification }
         let version = await cliVersion()
         try Task.checkCancellation()
         if observedEnvironment, version != observedCLI {
@@ -164,13 +212,13 @@ public actor ClaudeOAuthUsageClient {
             await diagnostics.record(.retry, at: now(), category: .cliChanged)
         }
         observedCLI = version; observedEnvironment = true
-        return credentialChanged
+        return credentialModification
     }
     private func fetch(onStatus: @escaping @Sendable (ClaudeConnectionStatus) async -> Void) async throws -> QuotaSnapshot {
         // Once signed out, the frequent recovery poll only probes the keychain attribute.
         // A changed attribute clears this state; the following fetch performs the full CLI check.
-        let credentialChanged = try await checkEnvironment(includeCLI: !signedOut)
-        if credentialChanged { signedOut = false }
+        let credentialModification = try await checkEnvironment(includeCLI: !signedOut)
+        if credentialModification == .external { signedOut = false }
         if signedOut {
             await markSignedOut(onStatus: onStatus)
             throw QuotaError.unauthorized(ClaudeCredentialStore.signedOutMessage)
@@ -185,7 +233,7 @@ public actor ClaudeOAuthUsageClient {
             catch let error as QuotaError {
                 try Task.checkCancellation()
                 if case .notConfigured = error {
-                    connection = ClaudeConnectionStatus()
+                    connection = ClaudeConnectionStatus(autoRefreshEnabled: autoRefreshEnabled)
                     connection.credentialsMissing = true
                     connection.requiresUserAction = true; connection.result = .needsLogin
                     await onStatus(connection)
@@ -200,8 +248,10 @@ public actor ClaudeOAuthUsageClient {
             }
             try Task.checkCancellation()
             if let observedCredential, observedCredential != credential.changeID {
-                resetRecovery()
-                await diagnostics.record(.retry, at: now(), category: .credentialChanged)
+                if credentialModification != .ownRefresh {
+                    resetRecovery()
+                    await diagnostics.record(.retry, at: now(), category: .credentialChanged)
+                }
             }
             observedCredential = credential.changeID
             connection.credentialsMissing = nil
@@ -260,7 +310,7 @@ public actor ClaudeOAuthUsageClient {
         }
     }
     private func markSignedOut(onStatus: @escaping @Sendable (ClaudeConnectionStatus) async -> Void) async {
-        connection = ClaudeConnectionStatus()
+        connection = ClaudeConnectionStatus(autoRefreshEnabled: autoRefreshEnabled)
         connection.credentialsMissing = false
         connection.requiresUserAction = true
         connection.result = .needsLogin
@@ -275,6 +325,33 @@ public actor ClaudeOAuthUsageClient {
         await diagnostics.record(.recoverEnter, at: now())
         try Task.checkCancellation()
         let valid = connection.expiresAt.map { $0 > now() } ?? false
+        if !autoRefreshEnabled {
+            connection.autoRefreshEnabled = false; connection.nextRetryAt = nil
+            await diagnostics.record(.refresherSkip, at: now(), category: .disabled)
+            await onStatus(connection)
+            return false
+        }
+        if let failureBackoffUntil, now() < failureBackoffUntil {
+            connection.nextRetryAt = failureBackoffUntil
+            await diagnostics.record(.refresherSkip, at: now(), category: .backoff)
+            await onStatus(connection)
+            return false
+        }
+        if let lastResumeAt {
+            let graceEnd = lastResumeAt.addingTimeInterval(45)
+            if now() < graceEnd {
+                connection.nextRetryAt = graceEnd
+                await diagnostics.record(.refresherSkip, at: now(), category: .wakeGrace)
+                await onStatus(connection)
+                return false
+            }
+        }
+        if resumeCycleOpen, refreshedResumeCycle == resumeCycle {
+            connection.nextRetryAt = nil
+            await diagnostics.record(.refresherSkip, at: now(), category: .backoff)
+            await onStatus(connection)
+            return false
+        }
         if now() < nextRefresh, !successCooldown || valid {
             if blocked, connection.isRecovering {
                 switch connection.result {
@@ -287,12 +364,34 @@ public actor ClaudeOAuthUsageClient {
             await onStatus(connection)
             return false
         }
+        if let networkRetryAt, now() < networkRetryAt {
+            connection.nextRetryAt = networkRetryAt
+            await diagnostics.record(.refresherSkip, at: now(), category: .network)
+            await onStatus(connection)
+            return false
+        }
+        networkRetryAt = nil
+        if await !reachability.isReachable() {
+            let started = networkWaitStarted ?? now()
+            networkWaitStarted = started
+            if now().timeIntervalSince(started) < 600 {
+                networkRetryAt = now().addingTimeInterval(15)
+                connection.nextRetryAt = networkRetryAt
+            } else {
+                networkWaitStarted = nil
+                connection.nextRetryAt = nil
+            }
+            await diagnostics.record(.refresherSkip, at: now(), category: .network)
+            await onStatus(connection)
+            return false
+        }
+        networkWaitStarted = nil; networkRetryAt = nil
         // Recheck immediately before invoking even an injected refresher: a cached token
         // or an HTTP response must not authorize CLI startup after credential removal.
         // Unknown presence (e.g. during unlock) keeps the existing recovery path available.
         if await credentialsPresent() == false {
             await credentials.invalidate()
-            connection = ClaudeConnectionStatus()
+            connection = ClaudeConnectionStatus(autoRefreshEnabled: autoRefreshEnabled)
             connection.credentialsMissing = true
             connection.requiresUserAction = true; connection.result = .needsLogin
             await onStatus(connection)
@@ -316,8 +415,11 @@ public actor ClaudeOAuthUsageClient {
         connection.isRefreshing = false
         connection.lastAttempt = now(); connection.result = result
         connection.requiresUserAction = false; successCooldown = false
-        await diagnostics.record(.refresherEnd, at: now(), category: ClaudeDiagnostics.category(result),
-                                 duration: max(0, now().timeIntervalSince(started)))
+        let ended = now()
+        rememberRefreshWindow(started: started, ended: ended)
+        await diagnostics.record(.refresherEnd, at: ended, category: ClaudeDiagnostics.category(result),
+                                 duration: max(0, ended.timeIntervalSince(started)),
+                                 reason: ClaudeDiagnostics.reason(result))
         try Task.checkCancellation()
         refreshStarted = nil
         var renewed = false
@@ -332,6 +434,7 @@ public actor ClaudeOAuthUsageClient {
             }
             if renewed {
                 failures = 0; loginFailures = 0; successCooldown = true
+                failureBackoffUntil = nil
                 nextRefresh = now().addingTimeInterval(1800); connection.isRecovering = false
             } else { scheduleFailure() }
         case .needsUserSetup:
@@ -341,20 +444,37 @@ public actor ClaudeOAuthUsageClient {
             loginFailures += 1; blocked = true
             // Initial failure plus two subsequent automatic attempts.
             connection.requiresUserAction = loginFailures >= 3
-            nextRefresh = now().addingTimeInterval(1800)
+            failureBackoffUntil = now().addingTimeInterval(1800)
+            nextRefresh = failureBackoffUntil ?? now()
         case .failed:
             loginFailures = 0; scheduleFailure()
         }
-        connection.nextRetryAt = nextRefresh
+        connection.nextRetryAt = nextRefreshDate()
         await onStatus(connection)
         try Task.checkCancellation()
         return renewed
     }
     private func scheduleFailure() {
-        let delays: [Double] = [120, 300, 900, 1800]
-        nextRefresh = now().addingTimeInterval(delays[min(failures, 3)])
-        connection.nextRetryAt = nextRefresh
+        // Only a failed attempt closes the wake cycle: a successful refresh must not block
+        // the next legitimate one, which is due when the token expires ~8 hours later.
+        if resumeCycleOpen { refreshedResumeCycle = resumeCycle }
+        failureBackoffUntil = now().addingTimeInterval(1800)
+        nextRefresh = failureBackoffUntil ?? now()
+        connection.nextRetryAt = nextRefreshDate()
         failures = min(failures + 1, 3)
+    }
+    private func nextRefreshDate() -> Date? {
+        [failureBackoffUntil, networkRetryAt, nextRefresh == .distantPast ? nil : nextRefresh]
+            .compactMap { $0 }.min()
+    }
+    private func rememberRefreshWindow(started: Date?, ended: Date) {
+        guard let started else { return }
+        lastRefreshBeganAt = started; lastRefreshEndedAt = ended
+    }
+    private func isOwnRefreshModification(_ date: Date) -> Bool {
+        guard let began = lastRefreshBeganAt, let ended = lastRefreshEndedAt else { return false }
+        // Keychain timestamps may have whole-second precision.
+        return date >= began.addingTimeInterval(-1) && date <= ended.addingTimeInterval(1)
     }
     static func retrySeconds(_ value: String?, now: Date) -> TimeInterval? {
         guard let raw = value else { return nil }
@@ -373,6 +493,14 @@ public actor ClaudeOAuthUsageClient {
 public protocol ClaudeConnectionProviding: QuotaProviding {
     func fetchQuota(onStatus: @escaping @Sendable (ClaudeConnectionStatus) async -> Void) async throws -> QuotaSnapshot
     func retryConnection() async
+    func setAutoRefreshEnabled(_ enabled: Bool) async
+    func noteSuspension() async
+    func noteResume() async
+}
+public extension ClaudeConnectionProviding {
+    func setAutoRefreshEnabled(_ enabled: Bool) async {}
+    func noteSuspension() async {}
+    func noteResume() async {}
 }
 public struct ClaudeQuotaProvider: ClaudeConnectionProviding {
     public let agent: ProviderID = .claude
@@ -383,4 +511,7 @@ public struct ClaudeQuotaProvider: ClaudeConnectionProviding {
         try await client.fetchQuota(onStatus: onStatus)
     }
     public func retryConnection() async { await client.retryConnection() }
+    public func setAutoRefreshEnabled(_ enabled: Bool) async { await client.setAutoRefreshEnabled(enabled) }
+    public func noteSuspension() async { await client.noteSuspension() }
+    public func noteResume() async { await client.noteResume() }
 }

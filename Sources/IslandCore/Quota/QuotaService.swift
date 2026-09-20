@@ -125,7 +125,6 @@ public actor QuotaService: QuotaServicing {
             tasks.forEach { $0.cancel() }
             for task in tasks { await task.value }
         } else if running {
-            if enabledIDs.contains(.claude) { await (providers[.claude] as? any ClaudeConnectionProviding)?.retryConnection() }
             for agent in enabledIDs where workers[agent] == nil { launch(agent, repeating: true) }
         }
     }
@@ -162,6 +161,15 @@ public actor QuotaService: QuotaServicing {
         guard enabledIDs.contains(.claude) else { return }
         await (providers[.claude] as? any ClaudeConnectionProviding)?.retryConnection()
         await refreshNow(agent: .claude)
+    }
+    public func setClaudeAutoRefresh(_ enabled: Bool) async {
+        await (providers[.claude] as? any ClaudeConnectionProviding)?.setAutoRefreshEnabled(enabled)
+    }
+    public func noteClaudeSuspension() async {
+        await (providers[.claude] as? any ClaudeConnectionProviding)?.noteSuspension()
+    }
+    public func noteClaudeResume() async {
+        await (providers[.claude] as? any ClaudeConnectionProviding)?.noteResume()
     }
     private func connectionChanged(_ status: ClaudeConnectionStatus, version: UUID) async {
         guard versions[.claude] == version else { return }

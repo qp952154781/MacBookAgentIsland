@@ -18,7 +18,8 @@ import IslandCore
             store = options.measure ? IslandStore(quotaService: quota, sessionService: sessions, processStarted: options.processStarted) : fixture
             if options.measure { store.providerDetection = fixture.providerDetection }
         } else {
-            quota = QuotaService(diagnostics: .shared)
+            let claude = ClaudeQuotaProvider(client: .live(reachability: AnthropicReachability()))
+            quota = QuotaService(providers: [claude, CodexQuotaProvider()], diagnostics: .shared)
             sessions = SessionService(providers: [ClaudeSessionProvider(
                 modelPreferences: ClaudeModelPreferences(defaults: UserDefaults.standard)), CodexSessionProvider()])
             store = IslandStore(providerDetector: ProviderDetector(), quotaService: quota, sessionService: sessions, processStarted: options.processStarted)

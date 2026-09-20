@@ -17,6 +17,7 @@ import IslandCore
     private var lastInterval = 0
     private var lastActive = 0
     private var lastMainScreen = false
+    private var lastClaudeAutoRefresh = true
     private var systemSleeping = false
     private var locked = false
     private var displaySleeping = false
@@ -54,14 +55,16 @@ import IslandCore
         }
         model.setExpansionMethod(settings.expansionMethod)
         settings.apply(to: store)
-        lastInterval = settings.refreshInterval; lastActive = settings.activeMinutes; lastMainScreen = settings.useMainScreen
+        lastInterval = settings.refreshInterval; lastActive = settings.activeMinutes
+        lastMainScreen = settings.useMainScreen; lastClaudeAutoRefresh = settings.claudeAutoRefresh
         controller.show()
         controller.setSystemSleeping(systemSleeping || locked || displaySleeping)
         if options.mockScenario == nil { model.enableSystemMetrics() }
         glyphTask = Task { await BrandGlyphLoader.shared.refresh(); await BrandGlyphLoader.shared.refreshCustom(settings.customSources) }
         lifecycleTask = Task {
             await store.setVisible(!systemSleeping && !locked && !displaySleeping)
-            await store.configure(interval: Double(settings.refreshInterval), activeWindow: Double(settings.activeMinutes * 60))
+            await store.configure(interval: Double(settings.refreshInterval), activeWindow: Double(settings.activeMinutes * 60),
+                                  claudeAutoRefresh: settings.claudeAutoRefresh)
             guard !Task.isCancelled else { return }
             await store.start()
         }
@@ -99,27 +102,37 @@ import IslandCore
             lastMainScreen = settings.useMainScreen
             controller?.reposition()
         }
-        guard lastInterval != settings.refreshInterval || lastActive != settings.activeMinutes else { return }
+        guard lastInterval != settings.refreshInterval || lastActive != settings.activeMinutes
+                || lastClaudeAutoRefresh != settings.claudeAutoRefresh else { return }
         lastInterval = settings.refreshInterval; lastActive = settings.activeMinutes
-        let interval = Double(lastInterval), active = Double(lastActive * 60), previous = settingsTask
+        lastClaudeAutoRefresh = settings.claudeAutoRefresh
+        let interval = Double(lastInterval), active = Double(lastActive * 60)
+        let autoRefresh = lastClaudeAutoRefresh, previous = settingsTask
         settingsTask = Task {
             await previous?.value
-            await store.configure(interval: interval, activeWindow: active)
+            await store.configure(interval: interval, activeWindow: active, claudeAutoRefresh: autoRefresh)
         }
     }
-    @objc private func sleep() { recordLifecycle(.sleep); systemSleeping = true; updateSuspension() }
+    @objc private func sleep() { recordLifecycle(.sleep); systemSleeping = true; updateSuspension(suspendClaude: true) }
     private static var screenIsLocked: Bool {
         (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
     @objc private func wake() {
         recordLifecycle(.wake)
         controller?.model.updateSystemMetrics(reset: true)
-        systemSleeping = false; locked = Self.screenIsLocked; updateSuspension(retryClaude: true)
+        systemSleeping = false; locked = Self.screenIsLocked
+        updateSuspension(resumeClaude: true, detectProviders: true)
     }
-    @objc private func displaySleep() { recordLifecycle(.displaySleep); displaySleeping = true; updateSuspension() }
-    @objc private func displayWake() { recordLifecycle(.displayWake); displaySleeping = false; locked = Self.screenIsLocked; updateSuspension() }
-    @objc private func lock() { recordLifecycle(.lock); locked = true; updateSuspension() }
-    @objc private func unlock() { recordLifecycle(.unlock); locked = false; updateSuspension(retryClaude: true) }
+    @objc private func displaySleep() { recordLifecycle(.displaySleep); displaySleeping = true; updateSuspension(suspendClaude: true) }
+    @objc private func displayWake() {
+        recordLifecycle(.displayWake); displaySleeping = false; locked = Self.screenIsLocked
+        updateSuspension(resumeClaude: true)
+    }
+    @objc private func lock() { recordLifecycle(.lock); locked = true; updateSuspension(suspendClaude: true) }
+    @objc private func unlock() {
+        recordLifecycle(.unlock); locked = false
+        updateSuspension(resumeClaude: true, detectProviders: true)
+    }
     @objc private func clockChanged() {
         guard !systemSleeping, !locked, !displaySleeping else { return }
         Task { await store?.refreshNow() }
@@ -128,7 +141,8 @@ import IslandCore
         guard options.mockScenario == nil else { return }
         Task { await ClaudeDiagnostics.shared.record(event) }
     }
-    private func updateSuspension(retryClaude: Bool = false) {
+    private func updateSuspension(resumeClaude: Bool = false, suspendClaude: Bool = false,
+                                  detectProviders: Bool = false) {
         let suspended = systemSleeping || locked || displaySleeping
         controller?.setSystemSleeping(suspended)
         guard !terminating, let store else { return }
@@ -136,7 +150,9 @@ import IslandCore
         visibilityTask = Task {
             await previous?.value
             guard !Task.isCancelled else { return }
-            if retryClaude { await store.detectProviders(); await store.retryClaudeConnection() }
+            if suspendClaude { await store.noteClaudeSuspension() }
+            if resumeClaude { await store.noteClaudeResume() }
+            if detectProviders { await store.detectProviders() }
             await store.setVisible(!suspended)
         }
     }

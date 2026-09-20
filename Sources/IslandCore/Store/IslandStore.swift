@@ -102,6 +102,7 @@ import Foundation
     public var quotaDisplayMode: QuotaDisplayMode = .remaining
     public var collapsedStyle: CollapsedStyle = .hidden
     public var wingWidth: Double = 76
+    public var claudeAutoRefresh = true
     public var expandedSessionIDs: Set<String> = []
     @ObservationIgnored private let quotaService: (any QuotaServicing)?
     @ObservationIgnored private let sessionService: (any SessionServicing)?
@@ -192,10 +193,12 @@ import Foundation
         _ = await (quotaRefresh, sessionRefresh)
     }
 
-    public func configure(interval: TimeInterval, activeWindow: TimeInterval) async {
+    public func configure(interval: TimeInterval, activeWindow: TimeInterval, claudeAutoRefresh: Bool? = nil) async {
+        if let claudeAutoRefresh { self.claudeAutoRefresh = claudeAutoRefresh }
         async let quota: Void? = quotaService?.setInterval(interval)
         async let session: Void? = sessionService?.setActiveWindow(activeWindow)
         _ = await (quota, session)
+        if let claudeAutoRefresh { await quotaService?.setClaudeAutoRefresh(claudeAutoRefresh) }
     }
 
     public func setVisible(_ visible: Bool) async {
@@ -210,6 +213,8 @@ import Foundation
         guard quotaServiceIDs.contains(.claude) else { return }
         await quotaService?.retryClaudeConnection()
     }
+    public func noteClaudeSuspension() async { await quotaService?.noteClaudeSuspension() }
+    public func noteClaudeResume() async { await quotaService?.noteClaudeResume() }
 
     private func receive(_ update: QuotaUpdate) {
         guard quotaServiceIDs.contains(update.agent) else { return }

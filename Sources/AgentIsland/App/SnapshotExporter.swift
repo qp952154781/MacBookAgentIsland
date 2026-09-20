@@ -40,7 +40,7 @@ import IslandCore
             ("collapsed-compact", .idle, .collapsed, true), ("collapsed-compact-active", .busy, .active, true),
             ("collapsed-compact-single", .idle, .collapsed, true),
             ("collapsed-left-active", .busy, .active, true), ("collapsed-right-active", .busy, .active, true),
-            ("expanded-recovering", .idle, .expanded, true), ("expanded-recovering-empty", .idle, .expanded, true), ("expanded-refreshing", .idle, .expanded, true), ("expanded-setup", .idle, .expanded, true), ("expanded-login", .idle, .expanded, true),
+            ("expanded-recovering", .idle, .expanded, true), ("expanded-recovering-empty", .idle, .expanded, true), ("expanded-refreshing", .idle, .expanded, true), ("expanded-setup", .idle, .expanded, true), ("expanded-login", .idle, .expanded, true), ("expanded-auto-refresh-disabled", .idle, .expanded, true),
             ("expanded-system-cpu-warning", .idle, .expanded, true),
             ("expanded-system-cpu-critical", .idle, .expanded, true),
             ("no-notch-system-cpu-warning", .idle, .expanded, false),
@@ -159,7 +159,7 @@ import IslandCore
             case "expanded-system-stopped":
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: 0, minRPM: 0, maxRPM: 6550)])
             case "expanded-system-disabled": store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, gpu: false)
-            case "expanded-refreshing", "expanded-recovering", "expanded-recovering-empty", "expanded-setup", "expanded-login", "claude-signed-out":
+            case "expanded-refreshing", "expanded-recovering", "expanded-recovering-empty", "expanded-setup", "expanded-login", "claude-signed-out", "expanded-auto-refresh-disabled":
                 var status = ClaudeConnectionStatus()
                 status.isRefreshing = name == "expanded-refreshing"
                 status.isRecovering = name.contains("recovering") || status.isRefreshing
@@ -167,6 +167,10 @@ import IslandCore
                 status.result = name == "expanded-setup" ? .needsUserSetup("需要在终端完成一次 Claude Code 首次设置")
                     : (name == "expanded-login" || name == "claude-signed-out") ? .needsLogin : nil
                 if name == "claude-signed-out" { status.credentialsMissing = false }
+                if name == "expanded-auto-refresh-disabled" {
+                    status.isRecovering = true; status.requiresUserAction = false
+                    status.autoRefreshEnabled = false; store.claudeAutoRefresh = false
+                }
                 store.claudeConnection = status
                 if name == "expanded-recovering-empty" { store.quotas[.claude] = nil }
                 store.quotas[.claude]?.fetchedAt = now.addingTimeInterval(-720)

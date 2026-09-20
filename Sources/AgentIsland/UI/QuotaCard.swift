@@ -9,6 +9,7 @@ struct QuotaCard: View {
     var descriptor: ProviderDescriptor? = nil
     var connection: ClaudeConnectionStatus? = nil
     var credentialsPresent: Bool? = nil
+    var autoRefreshEnabled = true
     var openSetup: () -> Void = {}
     var diagnostic: String? = nil
     var height: CGFloat = 134
@@ -32,7 +33,15 @@ struct QuotaCard: View {
                 Text(healthLabel).help(diagnostic ?? healthLabel).font(Theme.font(9)).foregroundStyle(Theme.tertiary).lineLimit(1)
             }.frame(height: 18)
             Group {
-                if (connection?.isRefreshing == true || connection?.isRecovering == true), connection?.requiresUserAction != true {
+                if agent == .claude, !autoRefreshEnabled, connection?.isRecovering == true {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(ClaudeConnectionStatus.automaticRefreshDisabledMessage).lineLimit(2)
+                        HStack {
+                            Button("复制登录命令", action: copyLogin).islandInteraction(.control("login:claude"))
+                            Button("重试", action: retry).islandInteraction(.control("retry:claude"))
+                        }
+                    }.font(Theme.font(10))
+                } else if (connection?.isRefreshing == true || connection?.isRecovering == true), connection?.requiresUserAction != true {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(ClaudeOAuthUsageClient.recoveringMessage).font(Theme.font(10)).foregroundStyle(Theme.secondary)
                         if let snapshot {
@@ -130,6 +139,7 @@ struct QuotaCard: View {
         }
     }
     private var healthLabel: String {
+        if agent == .claude, !autoRefreshEnabled, connection?.isRecovering == true { return "续期已关闭" }
         if connection?.isRefreshing == true || (connection?.isRecovering == true && connection?.requiresUserAction != true) { return "自动恢复中" }
         if connection?.credentialsMissing == true { return "未连接" }
         if connection?.requiresUserAction == true { return connection?.result == .needsLogin ? "需登录" : "待设置" }

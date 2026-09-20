@@ -115,6 +115,7 @@ struct ExpandedView: View {
         ForEach(store.quotaProviderIDs, id: \.self) { agent in
             QuotaCard(agent: agent, snapshot: store.quotas[agent], health: store.health[agent], now: now, descriptor: store.descriptor(for: agent), connection: agent == .claude ? store.claudeConnection : nil,
                       credentialsPresent: agent == .claude && store.providerDetection.installed[.claude] == true ? store.providerDetection.claudeCredentialsPresent : nil,
+                      autoRefreshEnabled: agent != .claude || store.claudeAutoRefresh,
                       openSetup: openClaudeSetup, diagnostic: store.quotaDiagnostics[agent],
                       height: Self.cardHeight(store: store), warning: store.warningThreshold, critical: store.criticalThreshold,
                       displayMode: store.quotaDisplayMode,

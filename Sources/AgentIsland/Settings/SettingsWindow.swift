@@ -183,11 +183,16 @@ struct SettingsView: View {
             }
             if store.quotaProviderIDs.contains(.claude) {
                 section("Claude 连接") {
+                    toggle("自动续期", enabled: settings.claudeAutoRefresh) {
+                        settings.claudeAutoRefresh.toggle()
+                    }
                     Text(connectionLabel).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         let current = snapshot ? snapshotDate : context.date
                         Text(store.claudeConnection?.expiresAt.map {
-                            $0 > current ? "登录剩余有效期：" + DisplayTime.duration($0.timeIntervalSince(current)) : "登录已到期，等待续期"
+                            if $0 > current { return "登录剩余有效期：" + DisplayTime.duration($0.timeIntervalSince(current)) }
+                            return settings.claudeAutoRefresh ? "登录已到期，等待续期"
+                                : ClaudeConnectionStatus.automaticRefreshDisabledMessage
                         } ?? "登录剩余有效期：未知").font(.caption).foregroundStyle(.secondary)
                     }
                     Text(store.claudeConnection?.lastAttempt.map {
@@ -268,6 +273,9 @@ struct SettingsView: View {
         }.buttonStyle(.plain).disabled(disabled).accessibilityLabel(title).accessibilityValue(enabled ? "开启" : "关闭")
     }
     private var connectionLabel: String {
+        if !settings.claudeAutoRefresh, store.claudeConnection?.isRecovering == true {
+            return ClaudeConnectionStatus.automaticRefreshDisabledMessage
+        }
         if let status = store.claudeConnection, status.isRefreshing || status.isRecovering || status.requiresUserAction {
             return status.recoveryMessage
         }
