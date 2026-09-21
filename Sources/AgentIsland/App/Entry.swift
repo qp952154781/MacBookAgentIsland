@@ -44,7 +44,9 @@ import IslandCore
                     exit(124)
                 }
             }
-            if options.snapshotDirectory != nil { try SnapshotExporter.validateRenderingDevice() }
+            if options.snapshotDirectory != nil || options.snapshotAnimationDirectory != nil {
+                try SnapshotExporter.validateRenderingDevice()
+            }
             let app = NSApplication.shared
             app.setActivationPolicy(.accessory)
             if options.printGeometry {
@@ -59,6 +61,10 @@ import IslandCore
             }
             if let directory = options.snapshotDirectory {
                 try await SnapshotExporter.export(to: directory)
+                return
+            }
+            if let directory = options.snapshotAnimationDirectory {
+                try await SnapshotAnimationExporter.export(to: directory)
                 return
             }
             if options.measure, NotchGeometry.preferred() == nil {

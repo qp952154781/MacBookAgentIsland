@@ -4,6 +4,10 @@ English: [README.en.md](README.en.md)
 
 把 Mac 的屏幕刘海变成 Claude Code / Codex 的额度与会话面板。
 
+![演示：从刘海展开](docs/images/demo.gif)
+
+收起时整个岛藏在硬件刘海里，鼠标移上去才展开；上图为内置演示数据的离屏渲染，动画曲线与实际一致。
+
 以下截图均为内置 mock 数据，额度、套餐、会话和系统指标均为演示值。
 截图日期使用固定示例时间并按 UTC 显示；已移除 EXIF/XMP 等附加元数据。
 

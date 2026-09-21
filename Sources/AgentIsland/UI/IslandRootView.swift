@@ -8,6 +8,10 @@ struct IslandRootView: View {
     var now = Date()
     var animated = true
     var animationsVisible = true
+    /// Explicit samples used only by deterministic offscreen exports.
+    /// Both remain nil during normal app rendering.
+    var previewPresentation: IslandMotionPresentation?
+    var previewContentProgress: Double?
     var refresh: () -> Void = {}
     var settings: () -> Void = {}
     var retry: (ProviderID) -> Void = { _ in }
@@ -22,8 +26,8 @@ struct IslandRootView: View {
         let target = IslandMotionPresentation(mode: mode,
             size: IslandLayout.size(for: mode, notch: notch, config: config,
                                     expandedContentHeight: ExpandedView.contentHeight(store: store, notch: notch)))
-        let rendered = renderedPresentation ?? target
-        let showsExpandedContent = expandedContentVisible ?? (mode == .expanded)
+        let rendered = previewPresentation ?? renderedPresentation ?? target
+        let showsExpandedContent = previewContentProgress.map { $0 > 0 } ?? expandedContentVisible ?? (mode == .expanded)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let shape = NotchShape(bottomRadius: rendered.mode == .expanded ? config.expandedBottomRadius : config.collapsedBottomRadius,
                                earRadius: notch.hasNotch ? config.earRadius : 0)
@@ -42,6 +46,7 @@ struct IslandRootView: View {
                                  animated: animated, animationsVisible: animationsVisible, refresh: refresh, settings: settings,
                                  retry: retry, openClaudeSetup: openClaudeSetup, copyLogin: copyLogin)
                 }
+                .modifier(IslandPreviewContentEffect(progress: previewContentProgress))
                 .transition(IslandMotion.contentTransition(reduceMotion: reduceMotion))
             } else if rendered.mode != .expanded, config.collapsedStyle == .wings {
                 CollapsedView(store: store, notch: notch, active: rendered.mode == .active,
@@ -57,10 +62,12 @@ struct IslandRootView: View {
         .foregroundStyle(Theme.primary)
         .environment(\.colorScheme, .dark)
         .onAppear {
+            guard previewPresentation == nil, previewContentProgress == nil else { return }
             if renderedPresentation == nil { renderedPresentation = target }
             if expandedContentVisible == nil { expandedContentVisible = mode == .expanded }
         }
         .onChange(of: target) { oldValue, newValue in
+            guard previewPresentation == nil, previewContentProgress == nil else { return }
             updatePresentation(from: renderedPresentation ?? oldValue, to: newValue, reduceMotion: reduceMotion)
         }
         .onChange(of: animationsVisible) { _, visible in
@@ -99,6 +106,18 @@ struct IslandRootView: View {
             }
         } else if new.mode == .expanded {
             expandedContentVisible = true
+        }
+    }
+}
+
+private struct IslandPreviewContentEffect: ViewModifier {
+    let progress: Double?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let progress {
+            content.modifier(IslandContentEffect(progress: progress))
+        } else {
+            content
         }
     }
 }

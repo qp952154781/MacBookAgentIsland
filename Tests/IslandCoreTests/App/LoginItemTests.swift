@@ -21,6 +21,7 @@ func loginItemRejectsInvalidArguments(_ arguments: [String]) {
 
 @Test(arguments: [
     ["--snapshot", "fixture-snapshots"],
+    ["--snapshot-animation", "fixture-animation"],
     ["--dump", "quota"],
     ["--dump", "sessions"],
     ["--print-geometry"],

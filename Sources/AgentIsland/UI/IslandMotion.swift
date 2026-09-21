@@ -133,7 +133,7 @@ enum IslandMotion {
     }
 }
 
-private struct IslandContentEffect: ViewModifier {
+struct IslandContentEffect: ViewModifier {
     var progress: Double
 
     func body(content: Content) -> some View {

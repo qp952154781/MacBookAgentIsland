@@ -4,6 +4,10 @@
 
 Turn your Mac's notch into a compact Claude Code and Codex quota and session panel.
 
+![Expanding out of the notch](docs/images/demo.gif)
+
+Rendered offscreen from built-in demo data, using the same animation curves as the app.
+
 The collapsed island hides inside the hardware notch by default; quota, sessions, and system metrics appear after you hover or click to expand. Displays without a notch use a 185 pt virtual-notch capsule. You can switch the collapsed style back to visible wings in Settings. Completed sessions never open the panel automatically.
 
 All screenshots use built-in mock data, including plans, usage, sessions and system metrics.

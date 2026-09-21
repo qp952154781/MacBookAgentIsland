@@ -20,9 +20,9 @@ import Testing
     #expect(loginBranch.upperBound < application.lowerBound)
     // Only these terminating audit branches may suspend. Any await on the
     // remaining GUI path resumes inside dispatch main and breaks AppKit dispatch.
-    let audit = try NSRegularExpression(pattern: #"if (options.dump == "(sessions|quota|system|claude-log|providers)"|let directory = options.snapshotDirectory|options.measure, NotchGeometry.preferred\(\) == nil) \{[^{}]*\}"#)
+    let audit = try NSRegularExpression(pattern: #"if (options.dump == "(sessions|quota|system|claude-log|providers)"|let directory = options.snapshot(Animation)?Directory|options.measure, NotchGeometry.preferred\(\) == nil) \{[^{}]*\}"#)
     let matches = audit.matches(in: main, range: NSRange(main.startIndex..., in: main))
-    #expect(matches.count == 7)
+    #expect(matches.count == 8)
     for match in matches.reversed() {
         let range = try #require(Range(match.range, in: main))
         let branch = String(main[range])

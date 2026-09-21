@@ -12,6 +12,7 @@ struct LaunchOptions {
     var printGeometry = false
     var measure = false
     var snapshotDirectory: String?
+    var snapshotAnimationDirectory: String?
     var mockScenario: MockScenario?
     var forcedState: IslandMode?
     var cycleStates: TimeInterval?
@@ -28,6 +29,7 @@ struct LaunchOptions {
         providers 将最后观察到的 Claude 模型名保存在此目录的应用偏好文件中；无记录时只尾读近 30 天最新 transcript。
         quota 仅导出此目录中的 Codex 本地额度，不读取令牌或启动在线查询、续期器。
       --snapshot <目录>  使用 Metal 生成快照后退出
+      --snapshot-animation <目录>  使用 Metal 生成 README 演示动图后退出
       --mock idle|busy|critical|disconnected|no-credentials  使用模拟数据
         disconnected：有凭据、连接恢复中；no-credentials：无凭据、显示登录指引。
       --force-state collapsed|active|expanded  固定显示状态
@@ -69,6 +71,7 @@ struct LaunchOptions {
             case "--measure": measure = true
             case "--print-geometry": printGeometry = true
             case "--snapshot": snapshotDirectory = try value(after: flag)
+            case "--snapshot-animation": snapshotAnimationDirectory = try value(after: flag)
             case "--mock":
                 guard let scenario = MockScenario(rawValue: try value(after: flag)) else { throw ParseError.invalid("无效的 mock 场景") }
                 mockScenario = scenario
@@ -95,8 +98,9 @@ struct LaunchOptions {
         }
         if cycleStates != nil, forcedState != nil { throw ParseError.invalid("--cycle-states 不能与 --force-state 同时使用") }
         if home != nil, dump == nil { throw ParseError.invalid("--home 仅供 --dump 诊断使用，GUI 模式不接受此参数") }
-        let auditModes = [printGeometry, snapshotDirectory != nil, dump != nil, measure].filter { $0 }.count
-        guard auditModes <= 1 else { throw ParseError.invalid("几何、快照、测量与数据导出模式不能同时使用") }
+        let auditModes = [printGeometry, snapshotDirectory != nil, snapshotAnimationDirectory != nil,
+                          dump != nil, measure].filter { $0 }.count
+        guard auditModes <= 1 else { throw ParseError.invalid("几何、快照、动图、测量与数据导出模式不能同时使用") }
         if loginItem != nil {
             guard auditModes == 0, mockScenario == nil, forcedState == nil, cycleStates == nil else {
                 throw ParseError.invalid("--login-item 不能与其它运行模式同时使用")
