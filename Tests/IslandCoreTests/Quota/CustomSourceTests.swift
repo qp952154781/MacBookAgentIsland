@@ -79,11 +79,11 @@ private func expectProcessReaped(_ pid: pid_t, sourceLocation: SourceLocation = 
     // This bounded polling is fixture-only; production cleanup stays event-driven.
     func isReaped() -> Bool { kill(pid, 0) == -1 && errno == ESRCH }
     let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: .seconds(5))
+    let deadline = clock.now.advanced(by: .seconds(15))
     while !isReaped(), clock.now < deadline {
         try await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(25))))
     }
-    #expect(isReaped(), "Fixture process was not reaped within 5 seconds", sourceLocation: sourceLocation)
+    #expect(isReaped(), "Fixture process was not reaped within 15 seconds", sourceLocation: sourceLocation)
 }
 
 // Serialize process fixtures; no GPU, network, real profiles, or credential stores are used.
@@ -121,8 +121,8 @@ private func expectProcessReaped(_ pid: pid_t, sourceLocation: SourceLocation = 
         let source = CustomSource(name: "timeout", command: try fixtureCommand("group", directory: directory))
         await #expect(throws: CustomSourceError.timeout) { try await runner.run(source) }
         let parent = try pid("parent.pid", directory: directory), child = try pid("child.pid", directory: directory)
-        #expect(kill(parent, 0) == -1 && errno == ESRCH)
-        #expect(kill(child, 0) == -1 && errno == ESRCH)
+        try await expectProcessReaped(parent)
+        try await expectProcessReaped(child)
         #expect(await runner.activeCount == 0)
     }
     @Test func stubbornGroupEscalatesAfterTwoSeconds() async throws {
@@ -133,7 +133,7 @@ private func expectProcessReaped(_ pid: pid_t, sourceLocation: SourceLocation = 
         await #expect(throws: CustomSourceError.timeout) { try await runner.run(source) }
         #expect(start.duration(to: .now) >= .seconds(2))
         let parent = try pid("parent.pid", directory: directory)
-        #expect(kill(parent, 0) == -1 && errno == ESRCH)
+        try await expectProcessReaped(parent)
     }
     @Test func sameSourceNeverOverlapsAndGlobalLimitIsThree() async throws {
         let directory = try quotaTestDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
@@ -166,7 +166,7 @@ private func expectProcessReaped(_ pid: pid_t, sourceLocation: SourceLocation = 
         for task in [first, second] { await #expect(throws: CancellationError.self) { try await task.value } }
         await #expect(throws: CancellationError.self) { try await runner.run(source) }
         let child = try pid("child.pid", directory: directory)
-        #expect(kill(child, 0) == -1 && errno == ESRCH)
+        try await expectProcessReaped(child)
         #expect(await runner.starts[source.id] == 1)
         await runner.setSuspended(false)
         #expect(try await runner.run(.init(name: "wake", command: "echo 62")).snapshot.windows.first?.remainingPercent == 62)

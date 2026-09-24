@@ -24,6 +24,23 @@ public struct SystemQuotaClock: QuotaClock {
     public func sleep(for seconds: TimeInterval) async throws { try await Task.sleep(for: .seconds(seconds)) }
 }
 
+private actor QuotaTaskCompletionRace {
+    private var result: Bool?
+    private var waiter: CheckedContinuation<Bool, Never>?
+
+    func value() async -> Bool {
+        if let result { return result }
+        return await withCheckedContinuation { waiter = $0 }
+    }
+
+    func resolve(_ value: Bool) {
+        guard result == nil else { return }
+        result = value
+        waiter?.resume(returning: value)
+        waiter = nil
+    }
+}
+
 public actor QuotaService: QuotaServicing {
     private var providers: [ProviderID: any QuotaProviding]
     private var customSources: [CustomSource] = []
@@ -34,8 +51,13 @@ public actor QuotaService: QuotaServicing {
     private let diagnostics: ClaudeDiagnostics
     private let clock: any QuotaClock
     private let jitter: @Sendable () -> Double
+    private let workerCancellationTimeout: TimeInterval
+    private let watchdogPollInterval: TimeInterval
     private var workers: [ProviderID: Task<Void, Never>] = [:]
     private var versions: [ProviderID: UUID] = [:]
+    private var workerStartedAt: [ProviderID: Date] = [:]
+    private var lastUpdates: [ProviderID: Date] = [:]
+    private var watchdogTask: Task<Void, Never>?
     private var snapshots: [ProviderID: QuotaSnapshot] = [:]
     private var latest: [ProviderID: QuotaUpdate] = [:]
     private var claudeConnection: ClaudeConnectionStatus?
@@ -49,46 +71,60 @@ public actor QuotaService: QuotaServicing {
 
     public init(providers: [any QuotaProviding] = [ClaudeQuotaProvider(), CodexQuotaProvider()],
                 intervals: [ProviderID: TimeInterval] = [.claude: 120, .codex: 120],
-                clock: any QuotaClock = SystemQuotaClock(), customRunner: CustomCommandRunner = .shared, allowsCustomCommands: Bool = true, diagnostics: ClaudeDiagnostics = .disabled, jitter: @escaping @Sendable () -> Double = { Double.random(in: -1...1) }) {
+                clock: any QuotaClock = SystemQuotaClock(), customRunner: CustomCommandRunner = .shared,
+                allowsCustomCommands: Bool = true, diagnostics: ClaudeDiagnostics = .disabled,
+                workerCancellationTimeout: TimeInterval = 10, watchdogPollInterval: TimeInterval = 60,
+                jitter: @escaping @Sendable () -> Double = { Double.random(in: -1...1) }) {
         self.customRunner = customRunner; self.allowsCustomCommands = allowsCustomCommands
         var byAgent: [ProviderID: any QuotaProviding] = [:]
         for provider in providers { byAgent[provider.agent] = provider }
         self.enabledIDs = providers.map(\.agent)
-        self.diagnostics = diagnostics; self.providers = byAgent; self.intervals = intervals; self.clock = clock; self.jitter = jitter
+        self.diagnostics = diagnostics; self.providers = byAgent; self.intervals = intervals; self.clock = clock
+        self.workerCancellationTimeout = workerCancellationTimeout.isFinite ? max(0.01, workerCancellationTimeout) : 10
+        self.watchdogPollInterval = watchdogPollInterval.isFinite ? max(0.01, watchdogPollInterval) : 60
+        self.jitter = jitter
     }
 
     public func setCustomSources(_ sources: [CustomSource]) async {
-        guard allowsCustomCommands, customSources != sources else { return }
+        guard allowsCustomCommands else { return }
+        guard customSources != sources else { reconcileWorkers(); return }
         let changed = customSources.filter { old in !sources.contains(old) }.map(\.id)
         customSources = sources
         let tasks = changed.compactMap { workers.removeValue(forKey: $0) }
-        for id in changed { versions[id] = nil; providers[id] = nil; latest[id] = nil; snapshots[id] = nil }
+        for id in changed {
+            versions[id] = nil; providers[id] = nil; latest[id] = nil; snapshots[id] = nil
+            workerStartedAt[id] = nil; lastUpdates[id] = nil
+        }
         tasks.forEach { $0.cancel() }
         for id in changed { await customRunner.cancel(source: id); await customRunner.forget(id) }
-        for task in tasks { await task.value }
-        guard customSources == sources else { return }
+        await waitForCancellation(of: tasks)
+        guard customSources == sources else { reconcileWorkers(); return }
         for source in sources {
             providers[source.id] = CustomQuotaProvider(source: source, runner: customRunner)
             intervals[source.id] = source.interval
         }
         // setEnabledProviders follows this reconciliation and launches added/replaced workers.
         enabledIDs.removeAll { changed.contains($0) || providers[$0] == nil }
+        reconcileWorkers()
     }
 
     public func setEnabledProviders(_ ids: [ProviderID]) async {
         let next = ids.filter { providers[$0] != nil }
-        guard next != enabledIDs else { return }
+        guard next != enabledIDs else { reconcileWorkers(); return }
         let removed = enabledIDs.filter { !next.contains($0) }
         enabledIDs = next
         providerVersion = UUID()
         let token = providerVersion
         let cancelled = removed.compactMap { workers.removeValue(forKey: $0) }
-        for id in removed { versions[id] = nil; latest[id] = nil; snapshots[id] = nil; failures[id] = nil }
+        for id in removed {
+            versions[id] = nil; latest[id] = nil; snapshots[id] = nil; failures[id] = nil
+            workerStartedAt[id] = nil; lastUpdates[id] = nil
+        }
         cancelled.forEach { $0.cancel() }
         for id in removed where customSources.contains(where: { $0.id == id }) { await customRunner.cancel(source: id) }
-        for task in cancelled { await task.value }
-        guard token == providerVersion, running, !suspended, !Task.isCancelled else { return }
-        for id in enabledIDs where workers[id] == nil { launch(id, repeating: true) }
+        await waitForCancellation(of: cancelled)
+        guard token == providerVersion else { reconcileWorkers(); return }
+        reconcileWorkers()
     }
 
     public func setInterval(_ seconds: TimeInterval) async {
@@ -108,38 +144,45 @@ public actor QuotaService: QuotaServicing {
     }
 
     public func start() {
-        guard !running else { return }
+        guard !running else { reconcileWorkers(); return }
         running = true; lifecycle = UUID()
         guard !suspended else { return }
         for agent in enabledIDs where workers[agent] == nil { launch(agent, repeating: true) }
+        startWatchdog()
     }
 
     /// Preserve subscribers while hidden; wake resumes the existing store connection.
     public func setSuspended(_ value: Bool) async {
-        guard suspended != value else { return }
+        guard suspended != value else {
+            if !value { reconcileWorkers() }
+            return
+        }
         suspended = value; lifecycle = UUID()
         if allowsCustomCommands { await customRunner.setSuspended(value) }
         if value {
+            stopWatchdog()
             let tasks = Array(workers.values)
             workers.removeAll(); versions.removeAll()
             tasks.forEach { $0.cancel() }
-            for task in tasks { await task.value }
+            await waitForCancellation(of: tasks)
         } else if running {
             for agent in enabledIDs where workers[agent] == nil { launch(agent, repeating: true) }
+            startWatchdog()
         }
     }
 
     public func stop() async {
         running = false; lifecycle = UUID()
+        stopWatchdog()
         let tasks = Array(workers.values)
         workers.removeAll(); versions.removeAll()
         tasks.forEach { $0.cancel() }
         subscribers.values.forEach { $0.finish() }; subscribers.removeAll()
         if allowsCustomCommands { await customRunner.cancelAll() }
-        for task in tasks { await task.value }
+        await waitForCancellation(of: tasks)
     }
 
-    /// Interrupts the selected sleep/query and waits for cancellation before starting its replacement.
+    /// Interrupts the selected sleep/query and waits only up to a fixed bound before replacing it.
     /// While stopped this performs one query; it does not start a scheduling loop.
     public func refreshNow(agent: ProviderID? = nil) async {
         guard !suspended else { return }
@@ -147,14 +190,32 @@ public actor QuotaService: QuotaServicing {
         let epoch = lifecycle
         var replaced: [(ProviderID, UUID, Task<Void, Never>?)] = []
         for key in selected where enabledIDs.contains(key) && providers[key] != nil {
-            let token = UUID(), task = workers[key]
+            let token = UUID(), task = workers.removeValue(forKey: key)
             versions[key] = token
             task?.cancel()
             replaced.append((key, token, task))
         }
-        for (_, _, task) in replaced { await task?.value }
-        guard epoch == lifecycle else { return }
-        for (key, token, _) in replaced where versions[key] == token { launch(key, repeating: running) }
+        await withTaskGroup(of: (ProviderID, UUID).self) { group in
+            for (key, token, task) in replaced {
+                let timeout = workerCancellationTimeout
+                group.addTask {
+                    _ = await Self.waitForCompletion(of: task, timeout: timeout)
+                    return (key, token)
+                }
+            }
+            for await (key, token) in group {
+                guard epoch == lifecycle, versions[key] == token else {
+                    if versions[key] == token { workers[key] = nil; versions[key] = nil }
+                    continue
+                }
+                guard !suspended, enabledIDs.contains(key), providers[key] != nil else {
+                    workers[key] = nil; versions[key] = nil
+                    continue
+                }
+                launch(key, repeating: running)
+            }
+        }
+        reconcileWorkers()
     }
 
     public func retryClaudeConnection() async {
@@ -187,10 +248,18 @@ public actor QuotaService: QuotaServicing {
     private func launch(_ agent: ProviderID, repeating: Bool) {
         let version = UUID()
         versions[agent] = version
+        workerStartedAt[agent] = clock.now()
         workers[agent] = Task { [weak self] in await self?.run(agent, version: version, repeating: repeating) }
     }
 
     private func run(_ agent: ProviderID, version: UUID, repeating: Bool) async {
+        defer {
+            if versions[agent] == version {
+                workers[agent] = nil
+                versions[agent] = nil
+                workerStartedAt[agent] = nil
+            }
+        }
         guard let provider = providers[agent] else { return }
         if provider is CustomQuotaProvider {
             let index = enabledIDs.filter { providers[$0] is CustomQuotaProvider }.firstIndex(of: agent) ?? 0
@@ -225,6 +294,7 @@ public actor QuotaService: QuotaServicing {
                 }
                 update = QuotaUpdate(agent: agent, snapshot: snapshots[agent], health: health, diagnostic: failure.message, claudeConnection: agent == .claude ? claudeConnection : nil)
             }
+            lastUpdates[agent] = clock.now()
             await recordHealth(update)
             guard versions[agent] == version, !Task.isCancelled else { return }
             latest[agent] = update
@@ -234,7 +304,6 @@ public actor QuotaService: QuotaServicing {
             catch { break }
         }
         await bootstrap
-        if versions[agent] == version { workers[agent] = nil; versions[agent] = nil }
     }
 
     private func loadInitialQuota(_ provider: any QuotaProviding, agent: ProviderID, version: UUID) async {
@@ -274,6 +343,84 @@ public actor QuotaService: QuotaServicing {
         guard previous != category else { return }
         await diagnostics.record(.healthChange, at: clock.now(), category: category, previous: previous)
     }
+
+    private nonisolated static func waitForCompletion(
+        of task: Task<Void, Never>?, timeout: TimeInterval
+    ) async -> Bool {
+        guard let task else { return true }
+        let race = QuotaTaskCompletionRace()
+        let completion = Task {
+            await task.value
+            await race.resolve(true)
+        }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(timeout)) }
+            catch { return }
+            await race.resolve(false)
+        }
+        let completed = await race.value()
+        if completed { deadline.cancel() } else { completion.cancel() }
+        return completed
+    }
+
+    private func waitForCancellation(of tasks: [Task<Void, Never>]) async {
+        let timeout = workerCancellationTimeout
+        await withTaskGroup(of: Void.self) { group in
+            for task in tasks {
+                group.addTask { _ = await Self.waitForCompletion(of: task, timeout: timeout) }
+            }
+        }
+    }
+
+    private func reconcileWorkers() {
+        guard running, !suspended else { return }
+        for agent in enabledIDs where providers[agent] != nil && workers[agent] == nil {
+            launch(agent, repeating: true)
+        }
+        startWatchdog()
+    }
+
+    private func startWatchdog() {
+        guard running, !suspended, watchdogTask == nil else { return }
+        let epoch = lifecycle
+        watchdogTask = Task { [weak self] in await self?.watchdogLoop(epoch: epoch) }
+    }
+
+    private func stopWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = nil
+    }
+
+    private func watchdogLoop(epoch: UUID) async {
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: .seconds(watchdogPollInterval)) }
+            catch { break }
+            guard epoch == lifecycle, running, !suspended else { break }
+            await watchdogTick()
+        }
+        if epoch == lifecycle { watchdogTask = nil }
+    }
+
+    private func watchdogTick() async {
+        guard running, !suspended else { return }
+        let now = clock.now()
+        for agent in enabledIDs where providers[agent] != nil {
+            let configured = intervals[agent] ?? 120
+            let interval = configured.isFinite ? max(1, configured) : 60
+            let threshold = max(3 * interval, 600)
+            let reference = [lastUpdates[agent], workerStartedAt[agent]].compactMap { $0 }.max()
+            let stale = reference.map { now.timeIntervalSince($0) > threshold } ?? false
+            guard stale || workers[agent] == nil else { continue }
+
+            let old = workers.removeValue(forKey: agent)
+            versions[agent] = nil
+            old?.cancel()
+            launch(agent, repeating: true)
+            await diagnostics.record(.watchdogRelaunch, at: now, provider: agent)
+        }
+    }
+
+    func activeWorkerIDs() -> Set<ProviderID> { Set(workers.keys) }
 
     private func removeSubscriber(_ id: UUID) { subscribers[id] = nil }
 }

@@ -4,6 +4,54 @@ import SQLite3
 import Darwin
 @testable import IslandCore
 
+private final class TimeoutRaceGate: @unchecked Sendable {
+    private let entered = DispatchSemaphore(value: 0)
+    private let release = DispatchSemaphore(value: 0)
+
+    func holdTeardown() {
+        entered.signal()
+        release.wait()
+    }
+
+    func waitUntilTeardown() async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: self.entered.wait(timeout: .now() + 1) == .success)
+            }
+        }
+    }
+
+    func resumeTeardown(after microseconds: Int) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + .microseconds(microseconds)) {
+            self.release.signal()
+        }
+    }
+}
+
+private final class TimeoutRaceTransport: JSONRPCTransport, @unchecked Sendable {
+    private let process: QuotaProcess
+
+    init(gate: TimeoutRaceGate) {
+        process = QuotaProcess(queueTeardownHook: { gate.holdTeardown() })
+    }
+
+    func start(executableURL: URL) async throws -> AsyncThrowingStream<Data, any Error> {
+        process.start(executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"],
+                      timeout: 0.002, interactive: false)
+    }
+
+    func send(_ data: Data) async throws {}
+    func close() { process.close() }
+}
+
+private final class CloseReturnProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var returned = false
+
+    func markReturned() { lock.withLock { returned = true } }
+    var hasReturned: Bool { lock.withLock { returned } }
+}
+
 @Test func rpcFramingHandshakeNotificationsAndClosure() async throws {
     let data = try quotaFixture("rpc-stream.jsonl")
     // Every byte is its own chunk, including non-ASCII/line boundaries.
@@ -158,6 +206,56 @@ import Darwin
     }
     task.cancel()
     await #expect(throws: CancellationError.self) { try await task.value }
+}
+
+@Test func quotaProcessTimeoutCancellationRaceDoesNotDeadlock() async {
+    // Hold the real process-timeout teardown until cancellation reaches the competing task path.
+    var random = UInt64(0x17_C0DE)
+    for _ in 0..<200 {
+        random = random &* 6_364_136_223_846_793_005 &+ 1
+        let cancellationJitter = Int(random % 5_001)
+        let rpcTimeout = 0.020 + Double(cancellationJitter) / 1_000_000
+        let gate = TimeoutRaceGate()
+        let transport = TimeoutRaceTransport(gate: gate)
+        let client = CodexAppServerClient(
+            locate: { URL(fileURLWithPath: "/fixture/codex") },
+            makeTransport: { transport },
+            timeout: rpcTimeout
+        )
+        let task = Task { try await client.fetchQuota() }
+        #expect(await gate.waitUntilTeardown())
+        gate.resumeTeardown(after: 30_000 + cancellationJitter)
+        do {
+            _ = try await task.value
+            Issue.record("Expected timeout or cancellation")
+        } catch {
+            #expect(error is QuotaError || error is CancellationError)
+        }
+    }
+}
+
+@Test func quotaProcessCloseNeverWaitsForBusyTeardownQueue() async throws {
+    let gate = TimeoutRaceGate()
+    let transport = TimeoutRaceTransport(gate: gate)
+    let stream = try await transport.start(executableURL: URL(fileURLWithPath: "/fixture/ignored"))
+    let consumer = Task {
+        do { for try await _ in stream {} }
+        catch { #expect(error is QuotaError || error is CancellationError) }
+    }
+    #expect(await gate.waitUntilTeardown())
+
+    let probe = CloseReturnProbe()
+    DispatchQueue.global().async {
+        transport.close()
+        probe.markReturned()
+    }
+    try await Task.sleep(for: .milliseconds(10))
+    let returnedBeforeRelease = probe.hasReturned
+    gate.resumeTeardown(after: 0)
+    try await eventually { probe.hasReturned }
+    await consumer.value
+
+    #expect(returnedBeforeRelease)
 }
 
 @Test func stdioTransportWithHandwrittenExecutableFixture() async throws {

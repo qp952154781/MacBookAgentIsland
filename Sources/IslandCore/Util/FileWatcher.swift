@@ -19,10 +19,11 @@ public final class FileWatcher: Sendable {
     public func cancel() { state.stop() }
     deinit { state.stop() }
 
-    // FSEvents exposes an opaque context pointer. All mutable state and stream lifecycle operations
-    // are confined to `queue`; stop synchronizes with callbacks before the owner releases this box.
+    // FSEvents exposes an opaque context pointer. Mutable state is confined to `queue`; stream
+    // delivery uses a separate serial queue so cancellation never synchronously waits on callbacks.
     final class State: @unchecked Sendable {
         let queue = DispatchQueue(label: "org.agentisland.AgentIsland.FileWatcher")
+        let deliveryQueue = DispatchQueue(label: "org.agentisland.AgentIsland.FileWatcher.delivery")
         let queueKey = DispatchSpecificKey<Bool>()
         let continuation: AsyncStream<Set<String>>.Continuation
         let debounceInterval: TimeInterval
@@ -83,10 +84,11 @@ public final class FileWatcher: Sendable {
             delivery?.cancel()
             let item = DispatchWorkItem { [weak self] in
                 guard let self, !self.stopped else { return }
-                self.continuation.yield(self.pending)
+                let paths = self.pending
                 self.pending.removeAll()
                 self.delivery = nil
                 self.deliveryDeadline = nil
+                self.deliveryQueue.async { self.continuation.yield(paths) }
             }
             delivery = item
             let scheduledDeadline = min(now + debounceInterval, deadline)
@@ -96,7 +98,7 @@ public final class FileWatcher: Sendable {
 
         func stop() {
             if DispatchQueue.getSpecific(key: queueKey) == true { stopOnQueue() }
-            else { queue.sync { stopOnQueue() } }
+            else { queue.async { self.stopOnQueue() } }
         }
 
         func stopOnQueue() {
@@ -112,7 +114,7 @@ public final class FileWatcher: Sendable {
                 self.stream = nil
             }
             pending.removeAll()
-            continuation.finish()
+            deliveryQueue.async { self.continuation.finish() }
         }
     }
 }

@@ -43,10 +43,12 @@ public extension ProcessRunner {
     }
 }
 
-// All Process/pipe/source state is confined to queue. The unchecked conformance bridges
-// Dispatch callbacks; public methods enqueue work or synchronize on that same queue.
+// All Process/pipe/source state is confined to queue. Continuations are delivered on the
+// separate delivery queue so task cancellation can never form a lock cycle with this queue.
 final class QuotaProcess: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.agentisland.AgentIsland.QuotaProcess")
+    private let deliveryQueue = DispatchQueue(label: "org.agentisland.AgentIsland.QuotaProcess.delivery")
+    private let queueTeardownHook: @Sendable () -> Void
     private var process: Process?
     private var input: Pipe?
     private var output: Pipe?
@@ -61,11 +63,18 @@ final class QuotaProcess: @unchecked Sendable {
     private var missing = false
     private var exitCode: Int32 = -1
 
+    init(queueTeardownHook: @escaping @Sendable () -> Void = {}) {
+        self.queueTeardownHook = queueTeardownHook
+    }
+
     func start(executableURL: URL, arguments: [String], timeout: TimeInterval,
                inspectStandardError: Bool = false, interactive: Bool = true) -> AsyncThrowingStream<Data, any Error> {
         let pair = AsyncThrowingStream<Data, any Error>.makeStream()
         queue.async {
-            guard !self.finished, !self.started else { pair.continuation.finish(throwing: CancellationError()); return }
+            guard !self.finished, !self.started else {
+                self.deliveryQueue.async { pair.continuation.finish(throwing: CancellationError()) }
+                return
+            }
             self.started = true
             self.continuation = pair.continuation
             let child = Process(), output = Pipe()
@@ -117,21 +126,32 @@ final class QuotaProcess: @unchecked Sendable {
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, any Error>) in
             queue.async {
                 guard !self.finished, let input = self.input else {
-                    result.resume(throwing: QuotaError.transient("额度查询进程已关闭")); return
+                    self.deliveryQueue.async {
+                        result.resume(throwing: QuotaError.transient("额度查询进程已关闭"))
+                    }
+                    return
                 }
                 let count = data.withUnsafeBytes { bytes in
                     Darwin.write(input.fileHandleForWriting.fileDescriptor, bytes.baseAddress, bytes.count)
                 }
                 guard count == data.count else {
                     self.finish(QuotaError.transient("额度查询通信失败"))
-                    result.resume(throwing: QuotaError.transient("额度查询通信失败")); return
+                    self.deliveryQueue.async {
+                        result.resume(throwing: QuotaError.transient("额度查询通信失败"))
+                    }
+                    return
                 }
-                result.resume()
+                self.deliveryQueue.async { result.resume() }
             }
         }
     }
 
-    func close() { queue.sync { finish(CancellationError()) } }
+    /// Cancellation callbacks and deinitializers must only enqueue here; they must never wait
+    /// synchronously for code on this queue.
+    func close() { queue.async { self.finish(CancellationError()) } }
+
+    /// Normal-path inspection only. Code on `queue` must never be synchronously awaited by a
+    /// cancellation callback; doing so can invert Swift task-status and Dispatch queue locks.
     func status() -> (Int32, Bool) { queue.sync { (exitCode, missing) } }
 
     @discardableResult private func drain(_ pipe: Pipe?, isError: Bool) -> Bool {
@@ -147,7 +167,9 @@ final class QuotaProcess: @unchecked Sendable {
                     errorSuffix.append(data)
                     if String(decoding: errorSuffix, as: UTF8.self).localizedCaseInsensitiveContains("could not be found") { missing = true }
                     errorSuffix = Data(errorSuffix.suffix(32))
-                } else { continuation?.yield(data) }
+                } else if let continuation {
+                    deliveryQueue.async { continuation.yield(data) }
+                }
             } else if count < 0 && errno == EINTR { continue }
             else { return count == 0 }
         }
@@ -170,6 +192,11 @@ final class QuotaProcess: @unchecked Sendable {
             }
         }
         process?.terminationHandler = nil; process = nil
-        continuation?.finish(throwing: error); continuation = nil
+        queueTeardownHook()
+        let continuation = continuation
+        self.continuation = nil
+        if let continuation {
+            deliveryQueue.async { continuation.finish(throwing: error) }
+        }
     }
 }

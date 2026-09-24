@@ -5,7 +5,7 @@ public actor ClaudeDiagnostics {
     public enum Event: String, Codable, Sendable {
         case fetchStart, fetchEnd, httpEnd, credentialRead, credentialInvalidated
         case recoverEnter, recoverSkip, refresherStart, refresherEnd, refresherSkip, healthChange
-        case sleep, wake, lock, unlock, displaySleep, displayWake, watchdog, retry
+        case sleep, wake, lock, unlock, displaySleep, displayWake, watchdog, watchdogRelaunch, retry
     }
     public enum Category: String, Codable, Sendable {
         case ok, transient, unauthorized, signedOut, notConfigured, decoding, cancelled, timeout
@@ -26,6 +26,7 @@ public actor ClaudeDiagnostics {
         public let duration: TimeInterval?
         public let previous: Category?
         public let reason: Reason?
+        public let provider: ProviderID?
     }
     public static let shared = ClaudeDiagnostics(directory: defaultDirectory)
     public static let disabled = ClaudeDiagnostics(directory: nil)
@@ -39,11 +40,12 @@ public actor ClaudeDiagnostics {
     }
     public func record(_ event: Event, at time: Date = Date(), category: Category? = nil,
                        statusCode: Int? = nil, present: Bool? = nil, expiresAt: Date? = nil,
-                       duration: TimeInterval? = nil, previous: Category? = nil, reason: Reason? = nil) {
+                       duration: TimeInterval? = nil, previous: Category? = nil, reason: Reason? = nil,
+                       provider: ProviderID? = nil) {
         guard let directory else { return }
         let record = Record(time: time, event: event, category: category, statusCode: statusCode,
                             present: present, expiresAt: expiresAt, duration: duration, previous: previous,
-                            reason: reason)
+                            reason: reason, provider: provider)
         do {
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
             var data = try encoder.encode(record); data.append(10)

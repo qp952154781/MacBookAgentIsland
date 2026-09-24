@@ -150,6 +150,25 @@ private actor CancellableQuotaProvider: QuotaProviding {
     }
 }
 
+private actor UncooperativeQuotaProvider: QuotaProviding {
+    nonisolated let agent: ProviderID
+    private(set) var calls = 0
+    private var pending: [CheckedContinuation<QuotaSnapshot, any Error>] = []
+
+    init(agent: ProviderID = .claude) { self.agent = agent }
+
+    func fetchQuota() async throws -> QuotaSnapshot {
+        calls += 1
+        return try await withCheckedThrowingContinuation { pending.append($0) }
+    }
+
+    func releaseAll() {
+        let continuations = pending
+        pending.removeAll()
+        continuations.forEach { $0.resume(throwing: CancellationError()) }
+    }
+}
+
 @Test func serviceCancelsInflightOnRefreshAndStop() async throws {
     let provider = CancellableQuotaProvider(), clock = FakeQuotaClock()
     let service = QuotaService(providers: [provider], clock: clock)
@@ -165,6 +184,90 @@ private actor CancellableQuotaProvider: QuotaProviding {
     try await eventually { await provider.calls == 3 }
     await service.stop()
     #expect(await provider.cancellations == 3)
+}
+
+@Test func refreshTimeoutRelaunchesStuckProviderWithoutBlockingOthers() async throws {
+    let stuck = UncooperativeQuotaProvider()
+    let codex = SequenceQuotaProvider(agent: .codex, [.success(quotaSample(.codex))])
+    let clock = FakeQuotaClock()
+    let service = QuotaService(providers: [stuck, codex], clock: clock,
+                               workerCancellationTimeout: 0.2, jitter: { 0 })
+    await service.start()
+    try await eventually {
+        let stuckCalls = await stuck.calls
+        let codexCalls = await codex.count
+        return stuckCalls == 1 && codexCalls == 1
+    }
+
+    let started = ContinuousClock.now
+    let refresh = Task { await service.refreshNow() }
+    try await eventually { await codex.count == 2 }
+    #expect(await stuck.calls == 1)
+    await refresh.value
+    let elapsed = started.duration(to: .now)
+
+    #expect(elapsed < .seconds(1))
+    try await eventually { await stuck.calls == 2 }
+    #expect(await service.activeWorkerIDs() == [.claude, .codex])
+
+    await service.stop()
+    await stuck.releaseAll()
+}
+
+@Test func lifecycleOperationsAlwaysReconcileEnabledWorkers() async throws {
+    let claude = SequenceQuotaProvider([.success(quotaSample())])
+    let codex = SequenceQuotaProvider(agent: .codex, [.success(quotaSample(.codex))])
+    let service = QuotaService(providers: [claude, codex], clock: FakeQuotaClock(),
+                               workerCancellationTimeout: 0.05, jitter: { 0 })
+    await service.start()
+    try await eventually { await service.activeWorkerIDs() == [.claude, .codex] }
+    await service.start()
+    await service.setEnabledProviders([.claude, .codex])
+    #expect(await service.activeWorkerIDs() == [.claude, .codex])
+
+    await service.setSuspended(true)
+    #expect(await service.activeWorkerIDs().isEmpty)
+    await service.refreshNow()
+    await service.setEnabledProviders([.claude])
+    await service.setSuspended(false)
+    try await eventually { await service.activeWorkerIDs() == [.claude] }
+
+    await service.refreshNow(agent: .codex)
+    #expect(await service.activeWorkerIDs() == [.claude])
+    await service.setEnabledProviders([.codex, .claude])
+    try await eventually { await service.activeWorkerIDs() == [.claude, .codex] }
+    await service.refreshNow()
+    #expect(await service.activeWorkerIDs() == [.claude, .codex])
+
+    await service.setSuspended(true)
+    await service.setEnabledProviders([.codex])
+    await service.refreshNow(agent: .codex)
+    await service.setSuspended(false)
+    try await eventually { await service.activeWorkerIDs() == [.codex] }
+    await service.stop()
+}
+
+@Test func quotaWatchdogRelaunchesStaleWorkerAndRecordsProvider() async throws {
+    let directory = try quotaTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let provider = UncooperativeQuotaProvider()
+    let clock = FakeQuotaClock()
+    let diagnostics = ClaudeDiagnostics(directory: directory)
+    let service = QuotaService(providers: [provider], intervals: [.claude: 30], clock: clock,
+                               diagnostics: diagnostics, workerCancellationTimeout: 0.05,
+                               watchdogPollInterval: 0.01, jitter: { 0 })
+    await service.start()
+    try await eventually { await provider.calls == 1 }
+
+    clock.advance(601)
+    try await eventually { await provider.calls == 2 }
+    let log = await diagnostics.recentLines().joined(separator: "\n")
+    #expect(log.contains("watchdogRelaunch"))
+    #expect(log.contains("claude"))
+    #expect(await service.activeWorkerIDs() == [.claude])
+
+    await service.stop()
+    await provider.releaseAll()
 }
 
 @Test func serviceMultipleSubscribersReceiveCachedUpdate() async throws {
