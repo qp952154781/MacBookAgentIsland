@@ -74,6 +74,17 @@ public struct LiveSystemSamplingScheduler: SystemSamplingScheduler {
                         }
                     }
                 }
+                if options.cpuTemperature {
+                    group.addTask {
+                        while !Task.isCancelled {
+                            let now = await scheduler.now()
+                            let temperature = await provider.cpuTemperature()
+                            guard !Task.isCancelled else { return }
+                            await self?.publishTemperature(temperature, token: token)
+                            do { try await scheduler.sleep(until: now + 2) } catch { return }
+                        }
+                    }
+                }
                 if options.network {
                     group.addTask {
                         var difference = NetworkDifferencer()
@@ -116,6 +127,10 @@ public struct LiveSystemSamplingScheduler: SystemSamplingScheduler {
     private func publishCPU(_ cpu: CPUMetrics?, token: Int) {
         guard running, token == generation else { return }
         metrics.cpu = cpu; receive(metrics)
+    }
+    private func publishTemperature(_ temperature: CPUTemperatureMetrics?, token: Int) {
+        guard running, token == generation else { return }
+        metrics.cpuTemperature = temperature; receive(metrics)
     }
     private func publishNetwork(_ rate: NetworkRate?, token: Int) {
         guard running, token == generation else { return }

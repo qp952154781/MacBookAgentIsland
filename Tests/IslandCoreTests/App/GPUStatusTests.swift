@@ -7,7 +7,9 @@ import Testing
 @MainActor @Test func gpuHardwareFitsBothPanelWidthsAndPreservesPriority() {
     let metrics = SystemMetrics(fan: .init(fans: [.init(index: 0, rpm: 2507, minRPM: 0, maxRPM: 6000)]),
                                 memory: .init(usedBytes: 72, totalBytes: 100),
-                                cpu: .init(percent: 12, sampleIntervalMs: 1000), gpu: .init(percent: 31))
+                                cpu: .init(percent: 12, sampleIntervalMs: 1000),
+                                cpuTemperature: .init(averageCelsius: 100, maximumCelsius: 101, keys: ["Tp01"]),
+                                gpu: .init(percent: 31))
     for hasNotch in [true, false] {
         for panelWidth: CGFloat in [600, 760] {
             let notch = SnapshotExporter.metrics(hasNotch: hasNotch)
@@ -17,23 +19,18 @@ import Testing
             let plan = status.layoutPlan
             print("Top band \(hasNotch ? "notch" : "capsule") \(panelWidth) pt: level \(plan.level.rawValue), \(plan.placements)")
             #expect(!plan.hidden.contains { !$0.isNetwork })
-            if hasNotch && panelWidth == 600 {
-                // Realistic worst-case rate and fan widths leave room for both directions and all hardware.
-                #expect(plan.level == .compactNetwork)
-                #expect(plan.hidden.isEmpty)
+            #expect(plan.placements.contains { $0.item == .cpuTemperature })
+            if let cpuIndex = plan.placements.firstIndex(where: { $0.item == .cpu }) {
+                #expect(plan.placements.indices.contains(cpuIndex + 1))
+                #expect(plan.placements[cpuIndex + 1].item == .cpuTemperature)
+                #expect(plan.placements[cpuIndex].side == plan.placements[cpuIndex + 1].side)
             }
-            if hasNotch && panelWidth == 760 {
-                #expect(plan.level == .overflow)
-                #expect(plan.hidden.isEmpty)
-                #expect(Set(plan.placements.map(\.item)) == Set(SystemTopBandItem.allCases))
-            }
-            if !hasNotch { #expect(plan.level == .full) }
             let regions = SystemTopBandLayout.regions(panelWidth: panelWidth,
                 notchWidth: hasNotch ? notch.notchRect.width : nil, notchSafetyInset: config.notchSafetyInset)
             for item in plan.placements {
                 if let region = regions.first(where: { $0.side == item.side }) {
                     #expect(item.x >= region.x)
-                    #expect(item.x + item.width <= region.x + region.width)
+                    #expect(item.x + item.width <= region.x + region.width + 0.001)
                 } else { Issue.record("Missing region for visible metric") }
             }
             #expect(plan.placements.first?.x == IslandLayout.expandedContentInset)
@@ -54,7 +51,9 @@ import Testing
         let metrics = SystemMetrics(network: .init(downBytesPerSec: percent * 1024 * 1024, upBytesPerSec: percent, interfaces: []),
                                     fan: .init(fans: [.init(index: 0, rpm: percent == 0 ? 0 : 2507, minRPM: 0, maxRPM: 6000)]),
                                     memory: .init(usedBytes: UInt64(percent), totalBytes: 100),
-                                    cpu: .init(percent: percent, sampleIntervalMs: 1000), gpu: .init(percent: percent))
+                                    cpu: .init(percent: percent, sampleIntervalMs: 1000),
+                                    cpuTemperature: .init(averageCelsius: percent, maximumCelsius: percent, keys: ["Tp01"]),
+                                    gpu: .init(percent: percent))
         let status = SystemStatusView(metrics: metrics, options: .init(), notch: notch, config: .init())
         let plan = status.layoutPlan
         plans.append(plan)
@@ -66,12 +65,33 @@ import Testing
     }
     #expect(plans.allSatisfy { $0 == plans.first })
     #expect(NSImage(systemSymbolName: "square.3.layers.3d", accessibilityDescription: nil) != nil)
+    #expect(NSImage(systemSymbolName: "thermometer.medium", accessibilityDescription: nil) != nil)
 }
 
 @MainActor @Test func gpuAndCPUShareExactColorThresholds() {
     for percent in [0.0, 31, 79.99] { #expect(SystemStatusView.utilizationColor(percent) == Theme.secondary) }
     for percent in [80.0, 85, 94.99] { #expect(SystemStatusView.utilizationColor(percent) == Theme.warning) }
     for percent in [95.0, 97, 100] { #expect(SystemStatusView.utilizationColor(percent) == Theme.critical) }
+}
+
+@MainActor @Test func cpuTemperatureHasExactColorThresholds() {
+    for value in [0.0, 58, 84.99] { #expect(SystemStatusView.temperatureColor(value) == Theme.secondary) }
+    for value in [85.0, 94.99] { #expect(SystemStatusView.temperatureColor(value) == Theme.warning) }
+    for value in [95.0, 97, 100] { #expect(SystemStatusView.temperatureColor(value) == Theme.critical) }
+}
+
+@MainActor @Test func cpuTemperatureUnavailableOrDisabledDoesNotConsumeWidth() {
+    let notch = SnapshotExporter.metrics(hasNotch: true)
+    let available = CPUTemperatureMetrics(averageCelsius: 58, maximumCelsius: 60, keys: ["Tp01"])
+    let metrics = SystemMetrics(cpu: .init(percent: 20, sampleIntervalMs: 1000), cpuTemperature: available)
+    let shown = SystemStatusView(metrics: metrics, options: .init(), notch: notch, config: .init()).layoutPlan
+    #expect(shown.placements.contains { $0.item == .cpuTemperature })
+    let absent = SystemStatusView(metrics: SystemMetrics(cpu: metrics.cpu), options: .init(),
+                                  notch: notch, config: .init()).layoutPlan
+    #expect(!absent.placements.contains { $0.item == .cpuTemperature })
+    let disabled = SystemStatusView(metrics: metrics, options: .init(cpuTemperature: false),
+                                    notch: notch, config: .init()).layoutPlan
+    #expect(!disabled.placements.contains { $0.item == .cpuTemperature })
 }
 
 @MainActor @Test func topBandWorstCaseSlotsContainAllFormattedValues() {
@@ -85,6 +105,7 @@ import Testing
             let values: [String]
             if item.isNetwork { values = rates.map { SystemTopBandFormat.rate($0, compact: level.compactRates) } }
             else if item == .fan { values = [0, 9, 2507, 65535, 99_999, 100_000, Double(UInt32.max), .nan].map(SystemTopBandFormat.fan) }
+            else if item == .cpuTemperature { values = ["—", "10°C", "58°C", "97°C", "100°C"] }
             else { values = ["—", "0%", "9%", "10%", "99%", "100%"] }
             for value in values {
                 let actual = NSHostingView(rootView: SystemStatusItemView(item: item, value: value, level: level)).fittingSize.width

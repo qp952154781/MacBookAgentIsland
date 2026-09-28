@@ -11,7 +11,8 @@ struct SystemStatusView: View {
         SystemTopBandLayout.plan(panelWidth: panelWidth, notchWidth: notch.hasNotch ? notch.notchRect.width : nil,
                                  notchSafetyInset: config.notchSafetyInset,
                                  widths: SystemStatusSizing.widths, options: options,
-                                 gpuAvailable: metrics.gpu != nil, fanAvailable: metrics.fan?.fans.first != nil)
+                                 gpuAvailable: metrics.gpu != nil, fanAvailable: metrics.fan?.fans.first != nil,
+                                 temperatureAvailable: metrics.cpuTemperature != nil)
     }
     private var panelWidth: CGFloat { IslandLayout.size(for: .expanded, notch: notch, config: config).width }
 
@@ -35,6 +36,7 @@ struct SystemStatusView: View {
         case .download: SystemTopBandFormat.rate(metrics.network?.downBytesPerSec, compact: level.compactRates)
         case .upload: SystemTopBandFormat.rate(metrics.network?.upBytesPerSec, compact: level.compactRates)
         case .cpu: metrics.cpu?.text ?? "—"
+        case .cpuTemperature: metrics.cpuTemperature?.text ?? "—"
         case .gpu: metrics.gpu?.text ?? "—"
         case .memory: metrics.memory.map { "\(Int($0.percent.rounded()))%" } ?? "—"
         case .fan: SystemTopBandFormat.fan(metrics.fan?.fans.first?.rpm)
@@ -44,6 +46,7 @@ struct SystemStatusView: View {
     private func color(_ item: SystemTopBandItem) -> Color {
         switch item {
         case .cpu: Self.utilizationColor(metrics.cpu?.percent)
+        case .cpuTemperature: Self.temperatureColor(metrics.cpuTemperature?.averageCelsius)
         case .gpu: Self.utilizationColor(metrics.gpu?.percent)
         case .memory: (metrics.memory?.percent ?? 0) >= 90 ? Theme.critical
             : (metrics.memory?.percent ?? 0) >= 80 ? Theme.warning : Theme.secondary
@@ -54,5 +57,9 @@ struct SystemStatusView: View {
     static func utilizationColor(_ value: Double?) -> Color {
         let percent = value ?? 0
         return percent >= 95 ? Theme.critical : percent >= 80 ? Theme.warning : Theme.secondary
+    }
+    static func temperatureColor(_ value: Double?) -> Color {
+        let celsius = value ?? 0
+        return celsius >= 95 ? Theme.critical : celsius >= 85 ? Theme.warning : Theme.secondary
     }
 }

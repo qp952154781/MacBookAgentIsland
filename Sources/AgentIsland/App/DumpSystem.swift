@@ -18,11 +18,13 @@ struct DumpSystem {
         let cpuTime = await scheduler.now()
         let cpu = counters.flatMap { cpuDifference.reading(for: $0, time: cpuTime) }
         let gpu = await provider.gpu()
+        let temperature = await provider.cpuTemperature()
         let memory = await provider.memory()
         let fan = await provider.fan()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(SystemMetrics(network: network, fan: fan, memory: memory, cpu: cpu, gpu: gpu))
+        let data = try encoder.encode(SystemMetrics(network: network, fan: fan, memory: memory,
+                                                    cpu: cpu, cpuTemperature: temperature, gpu: gpu))
         print(String(decoding: data, as: UTF8.self))
     }
 }

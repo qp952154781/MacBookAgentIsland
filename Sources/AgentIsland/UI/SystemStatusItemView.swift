@@ -23,6 +23,8 @@ struct SystemStatusItemView: View {
         case .download: "arrow.down"
         case .upload: "arrow.up"
         case .cpu: "cpu"
+        case .cpuTemperature: NSImage(systemSymbolName: "thermometer.medium", accessibilityDescription: nil) == nil
+            ? "thermometer" : "thermometer.medium"
         case .gpu: "square.3.layers.3d"
         case .memory: "memorychip"
         case .fan: "fan"
@@ -31,6 +33,7 @@ struct SystemStatusItemView: View {
     private var label: String {
         switch item {
         case .cpu: "CPU"
+        case .cpuTemperature: "温度"
         case .gpu: "GPU"
         case .memory: "内存"
         case .fan: "风扇"
@@ -47,7 +50,9 @@ struct SystemStatusItemView: View {
     private static func measure(_ level: SystemTopBandLevel) -> [SystemTopBandItem: CGFloat] {
         Dictionary(uniqueKeysWithValues: SystemTopBandItem.allCases.map { item in
             let prototypes = item.isNetwork ? SystemTopBandFormat.ratePrototypes(compact: level.compactRates)
-                : item == .fan ? SystemTopBandFormat.fanPrototypes : SystemTopBandFormat.percentagePrototypes
+                : item == .fan ? SystemTopBandFormat.fanPrototypes
+                : item == .cpuTemperature ? SystemTopBandFormat.temperaturePrototypes
+                : SystemTopBandFormat.percentagePrototypes
             let width = prototypes.map { value in
                 NSHostingView(rootView: SystemStatusItemView(item: item, value: value, level: level)).fittingSize.width
             }.max() ?? 0

@@ -37,6 +37,9 @@ public struct SMCValue: Sendable {
             guard bytes.count >= 2 else { return nil }
             let bits = UInt16(bytes[0]) << 8 | UInt16(bytes[1])
             value = type == "sp78" ? Double(Int16(bitPattern: bits)) / 256 : Double(bits) / (type == "fpe2" ? 4 : 1)
+        case "ui32":
+            guard bytes.count >= 4 else { return nil }
+            value = Double(bytes.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
         default: return nil
         }
         return value.isFinite ? value : nil
@@ -48,7 +51,32 @@ public protocol SMCReading: Sendable {
     func reset() async
 }
 
-public actor AppleSMCReader: SMCReading {
+/// Index enumeration stays inside IslandCore; the public transport API cannot issue commands.
+protocol SMCKeyEnumerating: Sendable {
+    func keyCount() async -> Int?
+    func key(at index: Int) async -> String?
+}
+
+/// This gate is checked immediately before every IOKit call. No caller supplies a command.
+enum SMCReadGate {
+    static func allowsKey(_ key: String) -> Bool {
+        if key == "#KEY" || key == "FNum" { return true }
+        if (0..<10).contains(where: { key == "F\($0)Ac" || key == "F\($0)Mn" || key == "F\($0)Mx" }) { return true }
+        let bytes = Array(key.utf8)
+        return bytes.count == 4 && bytes[0] == 84 && bytes.dropFirst().allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+        }
+    }
+    static func allows(command: UInt8, key: UInt32) -> Bool {
+        switch command {
+        case 5, 9: return allowsKey(String(bytes: (0..<4).map { UInt8(truncatingIfNeeded: key >> ((3 - $0) * 8)) }, encoding: .ascii) ?? "")
+        case 8: return key == 0
+        default: return false
+        }
+    }
+}
+
+public actor AppleSMCReader: SMCReading, SMCKeyEnumerating {
     private var connection: io_connect_t = 0
     private var failed = false
     public init() {}
@@ -59,36 +87,48 @@ public actor AppleSMCReader: SMCReading {
         failed = false
     }
     public func read(key: String) -> SMCValue? {
-        // The transport only accepts fan telemetry keys, and exposes no command parameter.
-        let allowed = key == "FNum" || (0..<10).contains { key == "F\($0)Ac" || key == "F\($0)Mn" || key == "F\($0)Mx" }
-        guard allowed, !failed, !Task.isCancelled, MemoryLayout<SMCParam>.size == 80 else { return nil }
-        if connection == 0 {
-            let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
-            guard service != 0 else { failed = true; return nil }
-            defer { IOObjectRelease(service) }
-            guard IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS else {
-                connection = 0; failed = true; return nil
-            }
-        }
+        guard SMCReadGate.allowsKey(key), !failed, !Task.isCancelled, open() else { return nil }
         var request = SMCParam()
         request.key = key.utf8.reduce(0) { ($0 << 8) | UInt32($1) }
         request.command = 9
-        guard let info = call(request), info.dataSize > 0, info.dataSize <= 32 else { return fail() }
+        // A missing key is normal during Intel fallback discovery.
+        guard let info = call(request), info.dataSize > 0, info.dataSize <= 32 else { return nil }
         request.dataSize = info.dataSize
         request.command = 5
-        guard var response = call(request) else { return fail() }
+        // A single sensor may disappear or fail without invalidating other readings.
+        guard var response = call(request) else { return nil }
         let type = String(bytes: (0..<4).map { UInt8(truncatingIfNeeded: info.dataType >> ((3 - $0) * 8)) }, encoding: .ascii) ?? ""
         let bytes = withUnsafeBytes(of: &response.bytes) { Array($0.prefix(Int(info.dataSize))) }
         return SMCValue(type: type, bytes: bytes)
     }
-    private func fail() -> SMCValue? {
-        guard !Task.isCancelled else { return nil }
-        failed = true
-        if connection != 0 { IOServiceClose(connection); connection = 0 }
-        return nil
+    func keyCount() -> Int? {
+        guard let value = read(key: "#KEY"), value.type == "ui32", let count = value.decoded,
+              count >= 0, count <= 100_000 else { return nil }
+        return Int(count)
+    }
+    func key(at index: Int) -> String? {
+        guard index >= 0, index < 100_000, !failed, !Task.isCancelled, open() else { return nil }
+        var request = SMCParam()
+        request.command = 8
+        request.data32 = UInt32(index)
+        guard let response = call(request) else { return nil }
+        let bytes = (0..<4).map { UInt8(truncatingIfNeeded: response.key >> ((3 - $0) * 8)) }
+        guard bytes.allSatisfy({ (32...126).contains($0) }) else { return nil }
+        return String(bytes: bytes, encoding: .ascii)
+    }
+    private func open() -> Bool {
+        guard MemoryLayout<SMCParam>.size == 80 else { return false }
+        if connection != 0 { return true }
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
+        guard service != 0 else { failed = true; return false }
+        defer { IOObjectRelease(service) }
+        guard IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS else {
+            connection = 0; failed = true; return false
+        }
+        return true
     }
     private func call(_ parameter: SMCParam) -> SMCParam? {
-        guard !Task.isCancelled, parameter.command == 5 || parameter.command == 9 else { return nil }
+        guard !Task.isCancelled, SMCReadGate.allows(command: parameter.command, key: parameter.key) else { return nil }
         var input = parameter, output = SMCParam(), size = MemoryLayout<SMCParam>.size
         let result = IOConnectCallStructMethod(connection, 2, &input, size, &output, &size)
         return result == KERN_SUCCESS && size == 80 && output.result == 0 ? output : nil

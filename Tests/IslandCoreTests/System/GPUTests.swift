@@ -126,7 +126,7 @@ private actor FakeGPUReader: GPUReading {
 
 @MainActor @Test func gpuCadenceHotSettingsCollapseAndLockSleep() async {
     let settings = AppSettings(), store = IslandStore()
-    settings.showCPU = false; settings.showNetwork = false; settings.showMemory = false; settings.showFan = false
+    settings.showCPU = false; settings.showCPUTemperature = false; settings.showNetwork = false; settings.showMemory = false; settings.showFan = false
     settings.apply(to: store)
     let scheduler = ManualSystemScheduler(), provider = FakeSystemProvider()
     let model = IslandViewModel(store: store)
@@ -231,7 +231,7 @@ private actor SuspendedGPUProvider: SystemMetricsProviding {
     let monitor = SystemMetricsMonitor(provider: provider, scheduler: scheduler) {
         if let gpu = $0.gpu { delivered.append(gpu.percent) }
     }
-    let options = SystemMetricOptions(network: false, fan: false, memory: false, cpu: false)
+    let options = SystemMetricOptions(network: false, fan: false, memory: false, cpu: false, cpuTemperature: false)
     monitor.update(expanded: true, options: options)
     var entered = provider.entered.stream.makeAsyncIterator()
     _ = await entered.next()

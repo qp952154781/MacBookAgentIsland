@@ -98,6 +98,14 @@ import IslandCore
         }
         for hasNotch in [true, false] {
             for width in [600, 760] {
+                for state in ["normal", "critical", "unavailable"] {
+                    cases.append(("system-temperature-\(width)-\(hasNotch ? "notch" : "capsule")-\(state)",
+                                  .idle, .expanded, hasNotch))
+                }
+            }
+        }
+        for hasNotch in [true, false] {
+            for width in [600, 760] {
                 for percent in [9, 100] {
                     cases.append(("top-band-\(width)-\(hasNotch ? "notch" : "capsule")-\(percent)", .idle, .expanded, hasNotch))
                 }
@@ -129,7 +137,8 @@ import IslandCore
             store.systemMetrics = SystemMetrics(
                 network: .init(downBytesPerSec: 2.5 * 1024 * 1024, upBytesPerSec: 180 * 1024, interfaces: ["en0"]),
                 fan: .init(fans: [.init(index: 0, rpm: 2507, minRPM: 2317, maxRPM: 6550)]),
-                memory: .init(usedBytes: 72 * 1024, totalBytes: 100 * 1024), cpu: .init(percent: 12, sampleIntervalMs: 1000), gpu: .init(percent: 31))
+                memory: .init(usedBytes: 72 * 1024, totalBytes: 100 * 1024),
+                cpu: .init(percent: 12, sampleIntervalMs: 1000), gpu: .init(percent: 31))
             if name.contains("system-spacing") {
                 let percent = name.hasSuffix("-9") ? 9 : 100
                 store.systemMetrics.cpu = .init(percent: Double(percent), sampleIntervalMs: 1000)
@@ -159,7 +168,7 @@ import IslandCore
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: 5500, minRPM: 2317, maxRPM: 6550)])
             case "expanded-system-stopped":
                 store.systemMetrics.fan = .init(fans: [.init(index: 0, rpm: 0, minRPM: 0, maxRPM: 6550)])
-            case "expanded-system-disabled": store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, gpu: false)
+            case "expanded-system-disabled": store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, cpuTemperature: false, gpu: false)
             case "expanded-refreshing", "expanded-recovering", "expanded-recovering-empty", "expanded-setup", "expanded-login", "claude-signed-out", "expanded-auto-refresh-disabled":
                 var status = ClaudeConnectionStatus()
                 status.isRefreshing = name == "expanded-refreshing"
@@ -256,6 +265,16 @@ import IslandCore
                     let panelWidth: CGFloat = name.hasSuffix("cpu-only") ? 400 : 320
                     notch.visibleFrame = CGRect(x: notch.notchRect.midX - (panelWidth + 48) / 2,
                                                 y: 0, width: panelWidth + 48, height: 900)
+                }
+            }
+            if name.hasPrefix("system-temperature-") {
+                store.sessionListLayout = name.contains("760") ? .twoColumns : .singleColumn
+                if name.hasSuffix("unavailable") { store.systemMetrics.cpuTemperature = nil }
+                else {
+                    let temperature = name.hasSuffix("critical") ? 97.0 : 58.0
+                    store.systemMetrics.cpuTemperature = .init(averageCelsius: temperature,
+                                                                 maximumCelsius: temperature + 2,
+                                                                 keys: ["Tp01", "Tp02"])
                 }
             }
             if name.hasPrefix("sessions-") {

@@ -92,6 +92,7 @@ public extension IslandStore {
         return options
     }
     var collapsedMetricOptions: SystemMetricOptions {
-        .init(network: false, fan: false, memory: providerWings.needsMemory, cpu: providerWings.needsCPU, gpu: false)
+        .init(network: false, fan: false, memory: providerWings.needsMemory,
+              cpu: providerWings.needsCPU, cpuTemperature: false, gpu: false)
     }
 }

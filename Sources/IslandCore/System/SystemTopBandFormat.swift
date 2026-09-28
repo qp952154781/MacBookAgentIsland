@@ -4,6 +4,7 @@ public enum SystemTopBandFormat {
     /// Network rates are shown up to terabytes per second; anything larger is treated as a bogus counter.
     private static let units = ["K", "M", "G", "T"]
     public static let percentagePrototypes = ["100%", "—"]
+    public static let temperaturePrototypes = ["100°C", "—"]
     /// Real Mac fans stay well below 100,000 RPM. Larger readings are shown as "—" rather than
     /// reserving width for the full UInt32 range on every layout pass.
     public static let maximumFanRPM = 99_999.0

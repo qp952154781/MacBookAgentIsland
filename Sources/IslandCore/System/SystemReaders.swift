@@ -94,22 +94,29 @@ public enum MemoryReader {
 public protocol SystemMetricsProviding: Sendable {
     func gpu() async -> GPUMetrics?
     func cpu() async -> CPUCounter?
+    func cpuTemperature() async -> CPUTemperatureMetrics?
     func network() async -> [NetworkCounter]?
     func memory() async -> MemoryMetrics?
     func fan() async -> FanMetrics?
     func reset() async
 }
 
+public extension SystemMetricsProviding {
+    func cpuTemperature() async -> CPUTemperatureMetrics? { nil }
+}
+
 public actor LiveSystemMetricsProvider: SystemMetricsProviding {
     private let fanReader: FanReader
+    private let temperatureReader: CPUTemperatureReader
     private let gpuReader: any GPUReading
     public init(smc: any SMCReading = AppleSMCReader(), gpu: any GPUReading = IOAcceleratorGPUReader()) {
-        fanReader = FanReader(smc: smc); gpuReader = gpu
+        fanReader = FanReader(smc: smc); temperatureReader = CPUTemperatureReader(smc: smc); gpuReader = gpu
     }
     public func gpu() async -> GPUMetrics? { Task.isCancelled ? nil : await gpuReader.sample() }
     public func cpu() -> CPUCounter? { Task.isCancelled ? nil : CPUReader.sample() }
+    public func cpuTemperature() async -> CPUTemperatureMetrics? { await temperatureReader.sample() }
     public func network() -> [NetworkCounter]? { Task.isCancelled ? nil : NetworkReader.sample() }
     public func memory() -> MemoryMetrics? { Task.isCancelled ? nil : MemoryReader.sample() }
     public func fan() async -> FanMetrics? { await fanReader.sample() }
-    public func reset() async { await fanReader.reset(); await gpuReader.reset() }
+    public func reset() async { await fanReader.reset(); await temperatureReader.reset(); await gpuReader.reset() }
 }

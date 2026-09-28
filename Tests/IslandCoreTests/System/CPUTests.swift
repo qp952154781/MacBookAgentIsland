@@ -37,7 +37,7 @@ import Testing
 
 @MainActor @Test func cpuCadenceHotSettingsCollapseAndSuspension() async {
     let settings = AppSettings(), store = IslandStore()
-    settings.showGPU = false; settings.showNetwork = false; settings.showMemory = false; settings.showFan = false
+    settings.showGPU = false; settings.showCPUTemperature = false; settings.showNetwork = false; settings.showMemory = false; settings.showFan = false
     settings.apply(to: store)
     let scheduler = ManualSystemScheduler(), provider = FakeSystemProvider()
     let model = IslandViewModel(store: store)

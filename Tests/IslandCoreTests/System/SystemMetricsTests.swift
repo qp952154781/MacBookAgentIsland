@@ -130,7 +130,7 @@ actor FakeSMC: SMCReading {
 @MainActor @Test func systemSettingsAndWingSafety() {
     let settings = AppSettings(), store = IslandStore()
     #expect(settings.showGPU && settings.showCPU && settings.showNetwork && settings.showFan && settings.showMemory)
-    settings.showGPU = false; settings.showCPU = false; settings.showNetwork = false; settings.showFan = false; settings.showMemory = false
+    settings.showGPU = false; settings.showCPU = false; settings.showCPUTemperature = false; settings.showNetwork = false; settings.showFan = false; settings.showMemory = false
     settings.apply(to: store)
     #expect(!store.systemMetricOptions.enabled)
     for hasNotch in [true, false] {

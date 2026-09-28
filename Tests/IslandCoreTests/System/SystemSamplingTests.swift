@@ -69,9 +69,9 @@ actor FakeSystemProvider: SystemMetricsProviding {
     let scheduler = ManualSystemScheduler(), provider = FakeSystemProvider()
     var latest = SystemMetrics()
     let monitor = SystemMetricsMonitor(provider: provider, scheduler: scheduler) { latest = $0 }
-    monitor.update(expanded: false, options: .init(cpu: false, gpu: false))
+    monitor.update(expanded: false, options: .init(cpu: false, cpuTemperature: false, gpu: false))
     #expect(await provider.networkCalls == 0)
-    monitor.update(expanded: true, options: .init(cpu: false, gpu: false))
+    monitor.update(expanded: true, options: .init(cpu: false, cpuTemperature: false, gpu: false))
     await scheduler.waitForDeadlines([0.5, 2])
     #expect(latest.network == nil)
     #expect(latest.memory?.percent == 72)
@@ -89,13 +89,13 @@ actor FakeSystemProvider: SystemMetricsProviding {
     await scheduler.waitForDeadlines([2.5, 4])
     #expect(await provider.memoryCalls == 2)
     #expect(await provider.fanCalls == 2)
-    monitor.update(expanded: false, options: .init(cpu: false, gpu: false))
+    monitor.update(expanded: false, options: .init(cpu: false, cpuTemperature: false, gpu: false))
     await scheduler.waitForDeadlines([])
     await scheduler.advance(to: 100)
     #expect(await provider.networkCalls == 3)
     #expect(await provider.memoryCalls == 2)
     #expect(latest.network == nil)
-    monitor.update(expanded: true, options: .init(cpu: false, gpu: false))
+    monitor.update(expanded: true, options: .init(cpu: false, cpuTemperature: false, gpu: false))
     await scheduler.waitForDeadlines([100.5, 102])
     #expect(latest.network == nil)
     #expect(await provider.resets == 0)
@@ -106,20 +106,20 @@ actor FakeSystemProvider: SystemMetricsProviding {
 @MainActor @Test func samplingSettingsWakeAndRapidRestart() async {
     let scheduler = ManualSystemScheduler(), provider = FakeSystemProvider()
     let monitor = SystemMetricsMonitor(provider: provider, scheduler: scheduler) { _ in }
-    monitor.update(expanded: true, options: .init(network: true, fan: false, memory: false, cpu: false, gpu: false))
+    monitor.update(expanded: true, options: .init(network: true, fan: false, memory: false, cpu: false, cpuTemperature: false, gpu: false))
     await scheduler.waitForDeadlines([0.5])
     #expect(await provider.memoryCalls == 0)
     #expect(await provider.fanCalls == 0)
-    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: false, cpu: false, gpu: false))
+    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: false, cpu: false, cpuTemperature: false, gpu: false))
     await scheduler.waitForDeadlines([])
-    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: true, cpu: false, gpu: false))
+    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: true, cpu: false, cpuTemperature: false, gpu: false))
     await scheduler.waitForDeadlines([2])
     #expect(await provider.networkCalls == 1)
     #expect(await provider.resets == 2)
-    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: true, cpu: false, gpu: false), reset: true)
+    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: true, cpu: false, cpuTemperature: false, gpu: false), reset: true)
     // A following restart awaits the wake reset even if its own predecessor is cancelled.
-    monitor.update(expanded: false, options: .init(network: false, fan: false, memory: true, cpu: false, gpu: false))
-    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: true, cpu: false, gpu: false))
+    monitor.update(expanded: false, options: .init(network: false, fan: false, memory: true, cpu: false, cpuTemperature: false, gpu: false))
+    monitor.update(expanded: true, options: .init(network: false, fan: false, memory: true, cpu: false, cpuTemperature: false, gpu: false))
     // Advancing beyond the old deadline disambiguates the old sleeper from the new loop.
     await scheduler.advance(to: 10)
     await scheduler.waitForDeadlines([12])
@@ -133,6 +133,7 @@ actor FakeSystemProvider: SystemMetricsProviding {
     let provider = FakeSystemProvider(), scheduler = ManualSystemScheduler()
     let store = IslandStore()
     store.systemMetricOptions.cpu = false
+    store.systemMetricOptions.cpuTemperature = false
     store.systemMetricOptions.gpu = false
     let model = IslandViewModel(store: store)
     model.enableSystemMetrics(provider: provider, scheduler: scheduler)
@@ -187,7 +188,7 @@ private actor SuspendedSystemProvider: SystemMetricsProviding {
     var latest = SystemMetrics()
     var deliveries = 0
     let monitor = SystemMetricsMonitor(provider: provider, scheduler: scheduler) { latest = $0; deliveries += 1 }
-    let options = SystemMetricOptions(network: true, fan: false, memory: false, cpu: false, gpu: false)
+    let options = SystemMetricOptions(network: true, fan: false, memory: false, cpu: false, cpuTemperature: false, gpu: false)
     monitor.update(expanded: true, options: options)
     var entered = provider.entered.stream.makeAsyncIterator()
     _ = await entered.next()

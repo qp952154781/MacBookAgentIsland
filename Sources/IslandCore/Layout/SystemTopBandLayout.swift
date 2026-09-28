@@ -1,13 +1,13 @@
 import Foundation
 
 public enum SystemTopBandItem: String, CaseIterable, Sendable {
-    case download, upload, cpu, gpu, memory, fan
+    case download, upload, cpu, cpuTemperature, gpu, memory, fan
 
     public var isNetwork: Bool { self == .download || self == .upload }
 }
 
 public enum SystemTopBandLevel: Int, CaseIterable, Sendable {
-    case full = 1, overflow, textOnly, compactNetwork, downloadOnly, hideHardware
+    case full = 1, overflow, textOnly, compactNetwork, downloadOnly, hardwareOnly, hideHardware
     public var showsIcons: Bool { rawValue < Self.textOnly.rawValue }
     public var compactRates: Bool { rawValue >= Self.compactNetwork.rawValue }
 }
@@ -78,14 +78,16 @@ public enum SystemTopBandLayout {
     /// Shared geometry and capacity calculation for rendering, tests, and snapshot guides.
     public static func plan(panelWidth: CGFloat, notchWidth: CGFloat?, notchSafetyInset: CGFloat,
                             outerInset: CGFloat = IslandLayout.expandedContentInset, widths: SystemTopBandWidths,
-                            options: SystemMetricOptions, gpuAvailable: Bool, fanAvailable: Bool) -> SystemTopBandPlan {
+                            options: SystemMetricOptions, gpuAvailable: Bool, fanAvailable: Bool,
+                            temperatureAvailable: Bool = false) -> SystemTopBandPlan {
         let regions = regions(panelWidth: panelWidth, notchWidth: notchWidth,
                               notchSafetyInset: notchSafetyInset, outerInset: outerInset)
         let capacity: SystemTopBandCapacity = notchWidth == nil
             ? .row(width: regions.first?.width ?? 0)
             : .wings(left: regions.first?.width ?? 0, right: regions.last?.width ?? 0)
         let local = plan(capacity: capacity, widths: widths, options: options,
-                         gpuAvailable: gpuAvailable, fanAvailable: fanAvailable)
+                         gpuAvailable: gpuAvailable, fanAvailable: fanAvailable,
+                         temperatureAvailable: temperatureAvailable)
         let placements = local.placements.compactMap { placement -> SystemTopBandPlacement? in
             guard let region = regions.first(where: { $0.side == placement.side }) else { return nil }
             return .init(item: placement.item, side: placement.side, x: region.x + placement.x, width: placement.width)
@@ -94,9 +96,10 @@ public enum SystemTopBandLayout {
     }
 
     public static func enabledItems(options: SystemMetricOptions, gpuAvailable: Bool,
-                                    fanAvailable: Bool) -> [SystemTopBandItem] {
+                                    fanAvailable: Bool, temperatureAvailable: Bool = false) -> [SystemTopBandItem] {
         var items: [SystemTopBandItem] = options.network ? [.download, .upload] : []
         if options.cpu { items.append(.cpu) }
+        if options.cpuTemperature && temperatureAvailable { items.append(.cpuTemperature) }
         if options.gpu && gpuAvailable { items.append(.gpu) }
         if options.memory { items.append(.memory) }
         if options.fan && fanAvailable { items.append(.fan) }
@@ -105,12 +108,15 @@ public enum SystemTopBandLayout {
 
     /// No live values or UI APIs: levels are decided exclusively from maximum widths and availability.
     public static func plan(capacity: SystemTopBandCapacity, widths: SystemTopBandWidths,
-                            options: SystemMetricOptions, gpuAvailable: Bool, fanAvailable: Bool) -> SystemTopBandPlan {
-        let enabled = enabledItems(options: options, gpuAvailable: gpuAvailable, fanAvailable: fanAvailable)
+                            options: SystemMetricOptions, gpuAvailable: Bool, fanAvailable: Bool,
+                            temperatureAvailable: Bool = false) -> SystemTopBandPlan {
+        let enabled = enabledItems(options: options, gpuAvailable: gpuAvailable,
+                                   fanAvailable: fanAvailable, temperatureAvailable: temperatureAvailable)
         let network = enabled.filter(\.isNetwork), hardware = enabled.filter { !$0.isNetwork }
         for level in SystemTopBandLevel.allCases where level != .hideHardware {
             if case .row = capacity, level == .overflow { continue }
-            let rates = level == .downloadOnly ? network.filter { $0 == .download } : network
+            let rates = level == .hardwareOnly ? []
+                : level == .downloadOnly ? network.filter { $0 == .download } : network
             if let placements = fit(rates: rates, hardware: hardware, capacity: capacity, widths: widths, level: level) {
                 return result(level, placements, enabled)
             }
@@ -158,8 +164,9 @@ public enum SystemTopBandLayout {
             return place(items, side: .row, gap: gap)
         case let .wings(left, right):
             guard left.isFinite, right.isFinite else { return nil }
-            // Move fan, then memory, then GPU, keeping CPU on the right and display order intact.
-            let movable = hardware.filter { $0 != .cpu }.count
+            // Move the trailing hardware first; CPU and its temperature stay adjacent on the right.
+            let anchor = hardware.firstIndex(of: .cpuTemperature) ?? hardware.firstIndex(of: .cpu)
+            let movable = hardware.count - (anchor.map { $0 + 1 } ?? 0)
             let maxMoved = level == .full ? 0 : movable
             for moved in 0...maxMoved {
                 let leftItems = rates + hardware.suffix(moved)

@@ -96,7 +96,7 @@ private func bandPlan(_ capacity: SystemTopBandCapacity, options: SystemMetricOp
 
 @Test func topBandCapsuleSkipsOverflowAndCompressesBeforeHiding() {
     for (width, level): (CGFloat, SystemTopBandLevel) in [
-        (568, .full), (450, .textOnly), (400, .compactNetwork), (350, .downloadOnly), (300, .hideHardware)
+        (568, .full), (450, .textOnly), (400, .compactNetwork), (350, .downloadOnly), (300, .hardwareOnly)
     ] {
         let plan = bandPlan(.row(width: width))
         #expect(plan.level == level)
@@ -245,8 +245,8 @@ private func bandPlan(_ capacity: SystemTopBandCapacity, options: SystemMetricOp
     }
     let plan = SystemTopBandLayout.plan(panelWidth: 600, notchWidth: 185, notchSafetyInset: 6, outerInset: 27,
         widths: bandWidths, options: .init(), gpuAvailable: true, fanAvailable: true)
-    #expect(plan.level == .hideHardware)
-    #expect(plan.hidden == [.upload, .fan])
+    #expect(plan.level == .hardwareOnly)
+    #expect(plan.hidden == [.download, .upload])
     #expect(plan.placements.first?.x == 27)
     if let last = plan.placements.last { #expect(last.x + last.width == 573) }
 }

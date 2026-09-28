@@ -34,7 +34,7 @@ import Testing
     store.providerOverrides = [.claude: false, .codex: false]
     #expect(store.providerWings.left == .cpu && store.providerWings.right == .memory)
     #expect(store.collapsedMetricOptions.cpu && store.collapsedMetricOptions.memory)
-    store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, gpu: false)
+    store.systemMetricOptions = .init(network: false, fan: false, memory: false, cpu: false, cpuTemperature: false, gpu: false)
     #expect(store.expandedMetricOptions.cpu && store.expandedMetricOptions.memory)
 }
 
