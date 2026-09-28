@@ -8,8 +8,10 @@ public struct GetAccountRateLimitsResponse: Decodable, Sendable {
 
 public enum CodexQuotaMapper {
     public static func map(_ response: GetAccountRateLimitsResponse, fetchedAt: Date = Date()) -> QuotaSnapshot {
-        let buckets = response.value["rateLimitsByLimitId"].object ?? [:]
-        let main = buckets["codex"].flatMap { $0.object == nil ? nil : $0 } ?? response.value["rateLimits"]
+        let bucketMap = response.value["rateLimitsByLimitId"].object
+        let buckets = bucketMap ?? [:]
+        // A present bucket map is authoritative. Only older responses without it may use the top-level value.
+        let main = bucketMap == nil ? response.value["rateLimits"] : buckets["codex"] ?? .object([:])
         var windows = bucketWindows(main, id: "codex", extra: false)
         for id in buckets.keys.sorted() where id != "codex" {
             if let bucket = buckets[id] { windows += bucketWindows(bucket, id: id, extra: true) }

@@ -59,6 +59,7 @@ private final class CloseReturnProbe: @unchecked Sendable {
     let client = CodexAppServerClient(locate: { URL(fileURLWithPath: "/fixture/codex") }, makeTransport: { transport })
     let result = try await client.fetchQuota()
     #expect(result.plan == "pro")
+    #expect(result.weekly?.usedPercent == 39)
     #expect(result.windows.count == 5)
     #expect(transport.isClosed)
     let sent = try transport.messages.map { try QuotaJSON.parse($0) }
@@ -158,10 +159,13 @@ private final class CloseReturnProbe: @unchecked Sendable {
 }
 
 @Test func codexProviderFallbackPreservesPrimaryError() async throws {
-    let snapshot = quotaSample(.codex)
+    var snapshot = quotaSample(.codex)
+    snapshot.source = .codexRollout
+    snapshot.note = "来自 Codex 会话记录 · 09:28"
     let fallback = SequenceQuotaProvider(agent: .codex, [.success(snapshot)])
     let provider = CodexQuotaProvider(appServer: { throw QuotaError.transient("fixture") }, rollout: fallback)
     #expect(try await provider.fetchQuota() == snapshot)
+    #expect(await provider.quotaDiagnostic() == "Codex 实时额度查询失败，已退回会话记录")
     let missing = SequenceQuotaProvider(agent: .codex, [.failure(.notConfigured("missing"))])
     await #expect(throws: QuotaError.notConfigured("未找到 Codex")) {
         try await CodexQuotaProvider(appServer: { throw QuotaError.notConfigured("missing") }, rollout: missing).fetchQuota()
@@ -174,9 +178,31 @@ private final class CloseReturnProbe: @unchecked Sendable {
         try await CodexQuotaProvider(appServer: { throw CancellationError() }, rollout: bad).fetchQuota()
     }
     #expect(await bad.count == 1)
-    let primary = CodexQuotaProvider(appServer: { snapshot }, rollout: fallback)
-    #expect(try await primary.fetchQuota() == snapshot)
+    let expectedSnapshot = snapshot
+    let primary = CodexQuotaProvider(appServer: { expectedSnapshot }, rollout: fallback)
+    #expect(try await primary.fetchQuota() == expectedSnapshot)
+    #expect(await primary.quotaDiagnostic() == nil)
     #expect(await fallback.count == 1)
+}
+
+@Test func missingCodexExecutableReportsFallbackDiagnostic() async throws {
+    var snapshot = quotaSample(.codex)
+    snapshot.source = .codexRollout
+    let fallback = SequenceQuotaProvider(agent: .codex, [.success(snapshot)])
+    let provider = CodexQuotaProvider(appServer: { throw QuotaError.notConfigured("未找到 Codex") }, rollout: fallback)
+    #expect(try await provider.fetchQuota() == snapshot)
+    #expect(await provider.quotaDiagnostic() == "未找到 Codex 程序，已退回会话记录")
+}
+
+@Test func appServerRejectsBucketMapWithoutCodexInsteadOfUsingTopLevel() async throws {
+    let initialized = Data(#"{"id":1,"result":{}}"#.utf8) + Data([10])
+    let limits = Data(#"{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":88,"windowDurationMins":10080}},"rateLimitsByLimitId":{"base_model_inference":{"primary":{"usedPercent":0,"windowDurationMins":10080}}}}}"#.utf8) + Data([10])
+    let response = initialized + limits
+    let transport = FakeRPCTransport(chunks: [response])
+    await #expect(throws: QuotaError.decoding("Codex 额度响应缺少 codex 额度桶")) {
+        try await CodexAppServerClient(locate: { URL(fileURLWithPath: "/fixture/codex") },
+                                       makeTransport: { transport }).fetchQuota()
+    }
 }
 
 @Test func quotaProcessClassifiesStderrAndDiscardsIt() async throws {

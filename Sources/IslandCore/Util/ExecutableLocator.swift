@@ -3,15 +3,22 @@ import Foundation
 public enum ExecutableLocator {
     public static func codexCLI(environment: [String: String] = ProcessInfo.processInfo.environment,
                                 homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-                                existenceOnly: Bool = false, homeOnly: Bool = false) async -> URL? {
+                                existenceOnly: Bool = false, homeOnly: Bool = false,
+                                applicationDirectories: [URL]? = nil) async -> URL? {
         let home = homeDirectory.path
-        var candidates = [environment["AGENT_ISLAND_CODEX_PATH"],
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-            "/Applications/Codex.app/Contents/Resources/codex",
-            "\(home)/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(home)/Applications/Codex.app/Contents/Resources/codex",
+        let roots = applicationDirectories ?? [URL(fileURLWithPath: "/Applications"),
+                                                homeDirectory.appendingPathComponent("Applications")]
+        let bundles = ["ChatGPT.app", "Codex.app"]
+        let modern = roots.flatMap { root in bundles.map {
+            root.appendingPathComponent("\($0)/Contents/Resources/codex-cli/bin/codex").path
+        } }
+        let legacy = roots.flatMap { root in bundles.map {
+            root.appendingPathComponent("\($0)/Contents/Resources/codex").path
+        } }
+        var candidates = [environment["AGENT_ISLAND_CODEX_PATH"]].compactMap { $0 }
+        candidates += modern + legacy + [
             "/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex", "\(home)/.npm-global/bin/codex"
-        ].compactMap { $0 }
+        ]
         candidates += (environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/codex" }
         if homeOnly { candidates = candidates.filter { $0.hasPrefix(home + "/") } }
         if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {

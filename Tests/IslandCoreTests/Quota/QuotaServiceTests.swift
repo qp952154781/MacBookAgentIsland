@@ -332,3 +332,19 @@ private actor BootstrapQuotaProvider: InitialQuotaProviding {
     await service.stop()
     #expect(await provider.cancelled)
 }
+
+@Test func rolloutFallbackUpdateIsStaleAndCarriesDiagnostic() async throws {
+    var snapshot = quotaSample(.codex)
+    snapshot.source = .codexRollout
+    snapshot.note = "来自 Codex 会话记录 · 09:28"
+    let fallback = SequenceQuotaProvider(agent: .codex, [.success(snapshot)])
+    let provider = CodexQuotaProvider(appServer: { throw QuotaError.notConfigured("未找到 Codex") }, rollout: fallback)
+    let service = QuotaService(providers: [provider], clock: FakeQuotaClock(), jitter: { 0 })
+    var iterator = await service.updates().makeAsyncIterator()
+    await service.refreshNow(agent: .codex)
+    let update = await iterator.next()
+    #expect(update?.health == .stale(lastSuccess: snapshot.fetchedAt))
+    #expect(update?.snapshot?.note == snapshot.note)
+    #expect(update?.diagnostic == "未找到 Codex 程序，已退回会话记录")
+    await service.stop()
+}

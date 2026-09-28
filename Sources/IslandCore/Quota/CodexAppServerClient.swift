@@ -88,6 +88,10 @@ public struct CodexAppServerClient: Sendable {
                     guard result["rateLimits"].object != nil || result["rateLimitsByLimitId"].object != nil else {
                         throw QuotaError.decoding("Codex 额度响应缺少额度数据")
                     }
+                    if let buckets = result["rateLimitsByLimitId"].object,
+                       buckets["codex"]?.object == nil {
+                        throw QuotaError.decoding("Codex 额度响应缺少 codex 额度桶")
+                    }
                     return CodexQuotaMapper.map(GetAccountRateLimitsResponse(value: result))
                 }
             }

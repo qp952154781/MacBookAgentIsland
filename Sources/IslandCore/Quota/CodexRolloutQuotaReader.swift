@@ -40,7 +40,9 @@ public actor CodexRolloutQuotaReader: CodexRolloutReading {
                 guard let root = try? QuotaJSON.parse(Data(line)), root["type"].string == "event_msg",
                       root["payload"]["type"].string == "token_count",
                       let timestamp = root["timestamp"].string.flatMap(DateParsing.iso8601),
-                      root["payload"]["rate_limits"].object != nil else { return }
+                      let bucketObject = root["payload"]["rate_limits"].object else { return }
+                // Missing limit_id is the legacy Codex format. Any explicit non-Codex bucket is unrelated.
+                if let limitID = bucketObject["limit_id"], limitID.string != "codex" { return }
                 let bucket = root["payload"]["rate_limits"]
                 var windows: [QuotaWindow] = []
                 for slot in ["primary", "secondary"] {
@@ -57,7 +59,8 @@ public actor CodexRolloutQuotaReader: CodexRolloutReading {
                 }
                 guard !windows.isEmpty else { return }
                 let snapshot = QuotaSnapshot(agent: .codex, plan: bucket["plan_type"].string,
-                                             windows: sortedQuotaWindows(windows), source: .codexRollout, fetchedAt: timestamp)
+                                             windows: sortedQuotaWindows(windows), source: .codexRollout,
+                                             fetchedAt: timestamp)
                 if latest == nil || timestamp >= (latest?.fetchedAt ?? .distantPast) { latest = snapshot }
             }
         }
@@ -144,10 +147,11 @@ public actor CodexRolloutQuotaReader: CodexRolloutReading {
     }
 }
 
-public struct CodexQuotaProvider: InitialQuotaProviding {
-    public let agent: ProviderID = .codex
+public actor CodexQuotaProvider: InitialQuotaProviding, QuotaDiagnosticProviding {
+    public nonisolated let agent: ProviderID = .codex
     private let appServer: @Sendable () async throws -> QuotaSnapshot
     private let rollout: any CodexRolloutReading
+    private var diagnostic: String?
     public init(client: CodexAppServerClient = CodexAppServerClient(), rollout: any CodexRolloutReading = CodexRolloutQuotaReader()) {
         self.appServer = { try await client.fetchQuota() }; self.rollout = rollout
     }
@@ -155,14 +159,25 @@ public struct CodexQuotaProvider: InitialQuotaProviding {
         self.appServer = appServer; self.rollout = rollout
     }
     public func initialQuota() async -> QuotaSnapshot? { try? await rollout.fetchQuota() }
+    public func quotaDiagnostic() -> String? { diagnostic }
     public func fetchQuota() async throws -> QuotaSnapshot {
-        do { return try await appServer() }
+        do {
+            let snapshot = try await appServer()
+            diagnostic = nil
+            return snapshot
+        }
         catch {
             if error is CancellationError || Task.isCancelled { throw CancellationError() }
             let primaryError = error
             let missing: Bool
             if case .notConfigured = error as? QuotaError { missing = true } else { missing = false }
-            do { return try await rollout.fetchQuota() }
+            do {
+                let snapshot = try await rollout.fetchQuota()
+                diagnostic = missing
+                    ? "未找到 Codex 程序，已退回会话记录"
+                    : "Codex 实时额度查询失败，已退回会话记录"
+                return snapshot
+            }
             catch {
                 if error is CancellationError || Task.isCancelled { throw CancellationError() }
                 if missing, case .notConfigured = error as? QuotaError { throw QuotaError.notConfigured("未找到 Codex") }

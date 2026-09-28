@@ -79,6 +79,7 @@ import IslandCore
             ("expanded-expired", .idle, .expanded, true), ("expanded-full", .idle, .expanded, true),
             ("collapsed-full", .idle, .collapsed, true), ("collapsed-full-narrow", .idle, .collapsed, true),
             ("expanded-loading", .idle, .expanded, true), ("expanded-stale", .idle, .expanded, true),
+            ("expanded-codex-rollout", .idle, .expanded, true),
             ("expanded-failed", .idle, .expanded, true), ("expanded-detail", .busy, .expanded, true),
             ("expanded-many", .busy, .expanded, true), ("collapsed-narrow", .critical, .collapsed, true), ("no-notch-collapsed", .idle, .collapsed, false), ("no-notch-expanded", .busy, .expanded, false), ("no-notch-active", .busy, .active, false)
         ]
@@ -195,6 +196,11 @@ import IslandCore
                 if name == "collapsed-full-narrow" { store.wingWidth = 60 }
             case "expanded-loading": store.quotas = [:]; store.health = [:]; store.lastRefresh = nil; store.sessionsLoaded = false
             case "expanded-stale": store.health[.claude] = .stale(lastSuccess: now.addingTimeInterval(-720))
+            case "expanded-codex-rollout":
+                store.quotas[.codex]?.source = .codexRollout
+                store.quotas[.codex]?.fetchedAt = now.addingTimeInterval(-720)
+                store.health[.codex] = .stale(lastSuccess: now.addingTimeInterval(-720))
+                store.setMockDiagnostic("未找到 Codex 程序，已退回会话记录", for: .codex)
             case "expanded-failed": store.quotas[.codex] = nil; store.health[.codex] = .failed(message: "本地服务暂时不可用")
             case "expanded-detail":
                 store.sessions = Array(store.sessions.prefix(1))

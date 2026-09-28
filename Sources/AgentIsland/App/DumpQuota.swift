@@ -5,11 +5,16 @@ struct DumpQuota {
     struct Entry: Encodable {
         let health: ProviderHealth
         let snapshot: QuotaSnapshot?
-        enum CodingKeys: String, CodingKey { case health, snapshot }
+        let diagnostic: String?
+        init(health: ProviderHealth, snapshot: QuotaSnapshot?, diagnostic: String? = nil) {
+            self.health = health; self.snapshot = snapshot; self.diagnostic = diagnostic
+        }
+        enum CodingKeys: String, CodingKey { case health, snapshot, diagnostic }
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(health, forKey: .health)
             try container.encode(snapshot, forKey: .snapshot)
+            try container.encodeIfPresent(diagnostic, forKey: .diagnostic)
         }
     }
     private struct Report: Encodable {
@@ -62,7 +67,13 @@ struct DumpQuota {
     }
 
     static func query(_ provider: any QuotaProviding) async -> Entry {
-        do { return Entry(health: .ok, snapshot: try await provider.fetchQuota()) }
+        do {
+            let snapshot = try await provider.fetchQuota()
+            let health: ProviderHealth = snapshot.source == .codexRollout
+                ? .stale(lastSuccess: snapshot.fetchedAt) : .ok
+            let diagnostic = await (provider as? any QuotaDiagnosticProviding)?.quotaDiagnostic()
+            return Entry(health: health, snapshot: snapshot, diagnostic: diagnostic)
+        }
         catch {
             if provider is CustomQuotaProvider {
                 // Never encode stderr, JSON input fragments, or free-form command errors.

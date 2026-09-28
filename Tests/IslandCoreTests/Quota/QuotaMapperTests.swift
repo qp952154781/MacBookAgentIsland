@@ -18,6 +18,7 @@ import Testing
 @Test func codexMultipleBucketsAndNulls() throws {
     let mapped = CodexQuotaMapper.map(try GetAccountRateLimitsResponse(data: quotaFixture("codex-multiple.json")))
     #expect(mapped.plan == "pro")
+    #expect(mapped.weekly?.usedPercent == 39)
     #expect(mapped.windows.map(\.kind) == [.session, .weekly, .weeklyModel, .other, .other])
     #expect(mapped.windows.map(\.label) == ["5 小时 · Variant_a", "本周", "本周 · Variant_a", "24 小时 · Custom", "30 天 · Custom"])
     #expect(mapped.windows.map(\.id) == ["codex_variant_a.primary", "codex.primary", "codex_variant_a.secondary", "codex_named.primary", "codex_named.secondary"])
@@ -31,7 +32,8 @@ import Testing
 
 @Test func codexToleranceAndDurationLabels() throws {
     let mapped = CodexQuotaMapper.map(try GetAccountRateLimitsResponse(data: Data(#"{"rateLimits":{"primary":"bad","secondary":{"usedPercent":0,"windowDurationMins":75}},"rateLimitsByLimitId":{"codex_bad":{"primary":{"usedPercent":"bad"}}}}"#.utf8)))
-    #expect(mapped.windows.map(\.label) == ["75 分钟"])
+    // Once the keyed map exists, its missing Codex bucket must not be replaced by top-level data.
+    #expect(mapped.windows.isEmpty)
     #expect(CodexQuotaMapper.windowType(minutes: 301, extra: false).0 == .session)
     #expect(CodexQuotaMapper.windowType(minutes: 10079, extra: true).0 == .weeklyModel)
 }
@@ -91,4 +93,27 @@ import Testing
     #expect(expired.session?.resetsAt == nil)
     #expect(expired.weekly?.usedPercent == 39)
     #expect(CodexRolloutQuotaReader.parse(Data("bad\n{}\n".utf8), now: timestamp) == nil)
+}
+
+@Test func rolloutUsesLatestCodexBucketAndSupportsLegacyMissingID() throws {
+    let now = try #require(DateParsing.iso8601("2026-09-28T12:00:00Z"))
+    func line(_ timestamp: String, id: String?, used: Int) -> String {
+        let limit = id.map { #", "limit_id": "\#($0)""# } ?? ""
+        return #"{"timestamp":"\#(timestamp)","type":"event_msg","payload":{"type":"token_count","rate_limits":{"plan_type":"pro"\#(limit),"primary":{"used_percent":\#(used),"window_minutes":10080}}}}"#
+    }
+    let interleaved = [
+        line("2026-09-28T09:00:00Z", id: "codex", used: 35),
+        line("2026-09-28T10:00:00Z", id: "base_model_inference", used: 0),
+        line("2026-09-28T11:00:00Z", id: "base_model_inference", used: 1)
+    ].joined(separator: "\n")
+    let selected = try #require(CodexRolloutQuotaReader.parse(Data(interleaved.utf8), now: now))
+    #expect(selected.weekly?.usedPercent == 35)
+    #expect(selected.fetchedAt == DateParsing.iso8601("2026-09-28T09:00:00Z"))
+    #expect(selected.source == .codexRollout)
+
+    let otherOnly = line("2026-09-28T11:00:00Z", id: "base_model_inference", used: 0)
+    #expect(CodexRolloutQuotaReader.parse(Data(otherOnly.utf8), now: now) == nil)
+
+    let legacy = line("2026-09-28T08:00:00Z", id: nil, used: 27)
+    #expect(CodexRolloutQuotaReader.parse(Data(legacy.utf8), now: now)?.weekly?.usedPercent == 27)
 }

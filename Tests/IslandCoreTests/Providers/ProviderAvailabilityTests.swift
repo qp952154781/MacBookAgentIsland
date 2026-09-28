@@ -2,6 +2,49 @@ import Foundation
 import Testing
 @testable import IslandCore
 
+private func writeExecutableFixture(_ url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("synthetic executable, never run".utf8).write(to: url)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+}
+
+@Test func codexLocatorSupportsBothApplicationRootsAndBundleNames() async throws {
+    let home = try quotaTestDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let roots = [home.appendingPathComponent("system-applications"), home.appendingPathComponent("Applications")]
+    for root in roots {
+        for bundle in ["ChatGPT.app", "Codex.app"] {
+            let executable = root.appendingPathComponent("\(bundle)/Contents/Resources/codex-cli/bin/codex")
+            try writeExecutableFixture(executable)
+            let located = await ExecutableLocator.codexCLI(environment: [:], homeDirectory: home,
+                existenceOnly: true, applicationDirectories: roots)
+            #expect(located?.path == physicalPath(executable.path))
+            try FileManager.default.removeItem(at: root)
+        }
+    }
+}
+
+@Test func codexLocatorPrefersNewBundlePathAndReresolvesRemovedResult() async throws {
+    let home = try quotaTestDirectory()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let systemApplications = home.appendingPathComponent("system-applications")
+    let userApplications = home.appendingPathComponent("Applications")
+    let legacy = systemApplications.appendingPathComponent("ChatGPT.app/Contents/Resources/codex")
+    let modern = userApplications.appendingPathComponent("Codex.app/Contents/Resources/codex-cli/bin/codex")
+    try writeExecutableFixture(legacy)
+    try writeExecutableFixture(modern)
+
+    let arguments = [systemApplications, userApplications]
+    let first = await ExecutableLocator.codexCLI(environment: [:], homeDirectory: home,
+        existenceOnly: true, applicationDirectories: arguments)
+    #expect(first?.path == physicalPath(modern.path))
+
+    try FileManager.default.removeItem(at: modern)
+    let second = await ExecutableLocator.codexCLI(environment: [:], homeDirectory: home,
+        existenceOnly: true, applicationDirectories: arguments)
+    #expect(second?.path == physicalPath(legacy.path))
+}
+
 @Test(arguments: [0, 1, 2, 3]) func providerDetectionUsesOnlySyntheticHome(mask: Int) async throws {
     let home = try quotaTestDirectory()
     defer { try? FileManager.default.removeItem(at: home) }

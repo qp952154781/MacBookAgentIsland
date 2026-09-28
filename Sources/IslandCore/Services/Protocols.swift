@@ -10,6 +10,10 @@ public protocol QuotaProviding: Sendable {
     var agent: ProviderID { get }
     func fetchQuota() async throws -> QuotaSnapshot
 }
+/// Optional provider-side context for a successful result that used degraded data.
+public protocol QuotaDiagnosticProviding: Sendable {
+    func quotaDiagnostic() async -> String?
+}
 /// Local bootstrap can populate the first frame while the authoritative query runs.
 public protocol InitialQuotaProviding: QuotaProviding {
     func initialQuota() async -> QuotaSnapshot?

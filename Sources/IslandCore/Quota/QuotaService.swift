@@ -279,7 +279,12 @@ public actor QuotaService: QuotaServicing {
                 } else { snapshot = try await provider.fetchQuota() }
                 guard !Task.isCancelled, versions[agent] == version else { return }
                 snapshots[agent] = snapshot; failures[agent] = 0
-                update = QuotaUpdate(agent: agent, snapshot: snapshot, health: .ok, warnings: await customRunner.previews[agent]?.warnings, claudeConnection: agent == .claude ? claudeConnection : nil)
+                let health: ProviderHealth = snapshot.source == .codexRollout
+                    ? .stale(lastSuccess: snapshot.fetchedAt) : .ok
+                let diagnostic = await (provider as? any QuotaDiagnosticProviding)?.quotaDiagnostic()
+                update = QuotaUpdate(agent: agent, snapshot: snapshot, health: health, diagnostic: diagnostic,
+                                     warnings: await customRunner.previews[agent]?.warnings,
+                                     claudeConnection: agent == .claude ? claudeConnection : nil)
             } catch let caught {
                 guard !(caught is CancellationError), !Task.isCancelled, versions[agent] == version else { return }
                 error = (caught as? QuotaError) ?? .transient((caught as? CustomSourceError)?.message ?? "额度查询失败")
