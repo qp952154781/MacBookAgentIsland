@@ -38,13 +38,21 @@ import IslandCore
     func resolve() async {
         async let claude = ExecutableLocator.claudeCLI()
         async let codex = ExecutableLocator.codexCLI()
-        if let url = await claude { claudeLoginCommand = Self.quote(url.path) + " auth login" }
-        if let url = await codex { codexLoginCommand = Self.quote(url.path) + " login" }
+        // Without a located binary, fall back to the plain command rather than keep a path
+        // that may since have been removed.
+        claudeLoginCommand = await claude.map { Self.quote($0.path) + " auth login" } ?? "claude auth login"
+        codexLoginCommand = await codex.map { Self.quote($0.path) + " login" } ?? "codex login"
     }
     func copy(_ agent: ProviderID) {
-        guard let command = loginCommand(for: agent) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(command, forType: .string)
+        // Claude Desktop replaces its versioned CLI directory on every update, and ChatGPT has
+        // moved the Codex binary before, so a path resolved at launch goes stale. Resolve again
+        // at the moment the user asks for the command.
+        Task { @MainActor in
+            await resolve()
+            guard let command = loginCommand(for: agent) else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+        }
     }
     func loginCommand(for agent: ProviderID) -> String? {
         switch agent {
