@@ -257,3 +257,27 @@ private final class ManualWatcherSchedule: @unchecked Sendable {
     var iterator = pair.stream.makeAsyncIterator()
     #expect(await iterator.next() == ["/fixture/first.jsonl", "/fixture/appending.jsonl"])
 }
+
+@Test func claudeLocatorFindsBothDesktopLayoutsAndPrefersVerifiedBuilds() async throws {
+    let home = try testDirectory(); defer { try? FileManager.default.removeItem(at: home) }
+    let root = home.appendingPathComponent("Library/Application Support/Claude/claude-code")
+    func install(_ relative: String, verified: Bool = false) throws -> URL {
+        let bundle = root.appendingPathComponent(relative, isDirectory: true)
+        let binary = bundle.appendingPathComponent("claude.app/Contents/MacOS/claude")
+        try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: binary)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        if verified { try Data().write(to: bundle.appendingPathComponent(".verified")) }
+        return binary
+    }
+    // A login shell without `claude` on PATH keeps the result confined to the fixture home.
+    let environment = ["PATH": "/usr/bin:/bin", "HOME": home.path, "ZDOTDIR": home.path]
+
+    let legacy = try install("2.1.284")
+    #expect(await ExecutableLocator.claudeCLI(environment: environment, homeDirectory: home)?.path == legacy.path)
+
+    // 2.1.286 moved the bundle under a build-hash directory; the newer version wins.
+    _ = try install("2.1.286/0aaaaaaaaaaa")
+    let verified = try install("2.1.286/f2326db61802", verified: true)
+    #expect(await ExecutableLocator.claudeCLI(environment: environment, homeDirectory: home)?.path == verified.path)
+}

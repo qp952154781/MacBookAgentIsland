@@ -33,10 +33,24 @@ public enum ExecutableLocator {
         let root = homeDirectory.appendingPathComponent("Library/Application Support/Claude/claude-code")
         let versions = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
         for version in versions.filter({ semanticVersion($0) != nil }).sorted(by: { compareVersions($0, $1) == .orderedDescending }) {
-            let url = root.appendingPathComponent("\(version)/claude.app/Contents/MacOS/claude")
-            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+            if let url = bundledClaude(in: root.appendingPathComponent(version, isDirectory: true)) { return url }
         }
         return await loginShellPath(command: "claude", environment: environment)
+    }
+
+    /// Claude Desktop has shipped two layouts: `<version>/claude.app` and, since 2.1.286,
+    /// `<version>/<build hash>/claude.app` with a `.verified` marker beside the bundle.
+    /// Prefer a verified build so a half-extracted update is never launched.
+    private static func bundledClaude(in versionDirectory: URL) -> URL? {
+        let executable = "claude.app/Contents/MacOS/claude"
+        let direct = versionDirectory.appendingPathComponent(executable)
+        if FileManager.default.isExecutableFile(atPath: direct.path) { return direct }
+        let builds = ((try? FileManager.default.contentsOfDirectory(atPath: versionDirectory.path)) ?? [])
+            .filter { !$0.hasPrefix(".") }.sorted()
+            .map { versionDirectory.appendingPathComponent($0, isDirectory: true) }
+            .filter { FileManager.default.isExecutableFile(atPath: $0.appendingPathComponent(executable).path) }
+        let verified = builds.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent(".verified").path) }
+        return (verified ?? builds.first)?.appendingPathComponent(executable)
     }
 
     private static func loginShellPath(command: String, environment: [String: String]) async -> URL? {
