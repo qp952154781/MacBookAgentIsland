@@ -18,19 +18,20 @@ public struct SessionPaths: Sendable {
 }
 
 public protocol ProcessLiveness: Sendable {
-    func isClaudeAlive(pid: Int32) -> Bool
+    /// Nil means process identity could not be checked, rather than confirmed dead.
+    func isClaudeAlive(pid: Int32) -> Bool?
 }
 
 public struct SystemProcessLiveness: ProcessLiveness {
     public init() {}
-    public func isClaudeAlive(pid: Int32) -> Bool {
+    public func isClaudeAlive(pid: Int32) -> Bool? {
         guard pid > 0 else { return false }
         let result = kill(pid, 0)
-        guard result == 0 || errno == EPERM else { return false }
+        guard result == 0 || errno == EPERM else { return errno == ESRCH ? false : nil }
         // proc_info.h defines this as 4 * MAXPATHLEN; its expression macro is not imported by Swift.
         var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
         let count = proc_pidpath(pid, &buffer, UInt32(buffer.count))
-        guard count > 0 else { return false }
+        guard count > 0 else { return nil }
         let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
         return String(decoding: bytes, as: UTF8.self).lowercased().contains("claude")
     }

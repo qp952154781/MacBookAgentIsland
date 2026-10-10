@@ -36,7 +36,8 @@ struct SessionFixture {
 
 struct FixtureLiveness: ProcessLiveness {
     var pids: Set<Int32> = [123]
-    func isClaudeAlive(pid: Int32) -> Bool { pids.contains(pid) }
+    var unknownPids: Set<Int32> = []
+    func isClaudeAlive(pid: Int32) -> Bool? { unknownPids.contains(pid) ? nil : pids.contains(pid) }
 }
 
 let sessionTestNow = Date(timeIntervalSince1970: 1_789_200_000)

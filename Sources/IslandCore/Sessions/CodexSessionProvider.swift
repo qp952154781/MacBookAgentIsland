@@ -7,7 +7,6 @@ public actor CodexSessionProvider: SessionProviding {
     private let clock: @Sendable () -> Date
     private var warning: String?
     public func diagnosticMessage() async -> String? { warning }
-    private var activeWindow: TimeInterval = 1800
     private var logs: [String: SessionLog<CodexRollout>] = [:]
     private var fileStamps: [String: SessionFileStamp] = [:]
     private var sessionCache: [String: AgentSession] = [:]
@@ -34,7 +33,6 @@ public actor CodexSessionProvider: SessionProviding {
                     (name.hasSuffix(".sqlite") || name.hasSuffix(".sqlite-wal")))
         }
     }
-    public func setActiveWindow(_ seconds: TimeInterval) { activeWindow = seconds }
     public func currentSessions() async -> [AgentSession] { await currentSessions(now: clock()) }
     public func parsedBytesLastScan() -> Int { diagnostics.parsedBytes }
     public func currentSessions(now: Date) async -> [AgentSession] {
@@ -49,7 +47,7 @@ public actor CodexSessionProvider: SessionProviding {
         return result
     }
 
-    private func readThreads(now: Date) -> [CodexThread]? {
+    private func readThreads() -> [CodexThread]? {
         let databases = sessionChildren(paths.codex).compactMap { url -> (Int, URL)? in
             let name = url.deletingPathExtension().lastPathComponent
             guard url.pathExtension == "sqlite", name.hasPrefix("state_"), sessionRegularFile(url),
@@ -66,10 +64,11 @@ public actor CodexSessionProvider: SessionProviding {
         sqlite3_busy_timeout(database, 100)
         var statement: OpaquePointer?
         // SELECT * tolerates missing optional columns in older schemas; names are read dynamically.
-        let sql = "SELECT * FROM threads WHERE archived = 0 AND updated_at_ms > ? ORDER BY updated_at_ms DESC LIMIT 50"
+        // An old update timestamp can still be a long-running turn. Parse before any
+        // expiry/limit decision; diagnostics also retain expired threads.
+        let sql = "SELECT * FROM threads WHERE archived = 0 ORDER BY updated_at_ms DESC"
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else { return nil }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_double(statement, 1, now.addingTimeInterval(-86400).timeIntervalSince1970 * 1000)
         var indices: [String: Int32] = [:]
         for index in 0..<sqlite3_column_count(statement) {
             if let name = sqlite3_column_name(statement, index) { indices[String(cString: name)] = index }
@@ -97,18 +96,18 @@ public actor CodexSessionProvider: SessionProviding {
         }
     }
 
-    private func directoryThreads(now: Date) -> [CodexThread] {
-        let calendar = Calendar.current
+    private func directoryThreads() -> [CodexThread] {
         var threads: [CodexThread] = []
-        for offset in [0, -1] {
-            guard let date = calendar.date(byAdding: .day, value: offset, to: now) else { continue }
-            let parts = calendar.dateComponents([.year, .month, .day], from: date)
-            guard let year = parts.year, let month = parts.month, let day = parts.day else { continue }
-            let relative = String(format: "sessions/%04d/%02d/%02d", year, month, day)
-            for file in sessionChildren(paths.codex.appendingPathComponent(relative)) where file.lastPathComponent.hasPrefix("rollout-") && file.pathExtension == "jsonl" && sessionRegularFile(file) {
-                let id = String(file.deletingPathExtension().lastPathComponent.suffix(36))
-                guard UUID(uuidString: id) != nil else { continue }
-                threads.append(CodexThread(id: id, rollout: file, updated: sessionModified(file) ?? .distantPast))
+        let root = paths.codex.appendingPathComponent("sessions")
+        for year in sessionChildren(root) where sessionIsDirectory(year) {
+            for month in sessionChildren(year) where sessionIsDirectory(month) {
+                for day in sessionChildren(month) where sessionIsDirectory(day) {
+                    for file in sessionChildren(day) where file.lastPathComponent.hasPrefix("rollout-") && file.pathExtension == "jsonl" && sessionRegularFile(file) {
+                        let id = String(file.deletingPathExtension().lastPathComponent.suffix(36))
+                        guard UUID(uuidString: id) != nil else { continue }
+                        threads.append(CodexThread(id: id, rollout: file, updated: sessionModified(file) ?? .distantPast))
+                    }
+                }
             }
         }
         return threads
@@ -123,11 +122,11 @@ public actor CodexSessionProvider: SessionProviding {
         let knownPaths = Set(threads.compactMap { $0.rollout?.path })
         let discover = changes == nil || changes?.contains(where: { !knownPaths.contains($0) }) == true
         if discover {
-            let indexed = readThreads(now: now)
+            let indexed = readThreads()
             report.sqliteReadable = indexed != nil
             report.sqliteThreads = indexed?.count ?? 0
             report.usedDirectoryFallback = indexed == nil
-            threads = indexed ?? directoryThreads(now: now)
+            threads = indexed ?? directoryThreads()
         } else {
             report.sqliteReadable = diagnostics.sqliteReadable
             report.sqliteThreads = diagnostics.sqliteThreads
@@ -146,17 +145,15 @@ public actor CodexSessionProvider: SessionProviding {
         report.transcripts = fileStamps.count
         var sessions: [String: AgentSession] = [:]
         var retained: Set<String> = []
-        for thread in threads.sorted(by: { $0.updated > $1.updated }).prefix(50) {
+        for thread in threads.sorted(by: { $0.updated > $1.updated }) {
             if Task.isCancelled { break }
             let modified = thread.rollout.flatMap { fileStamps[$0.path]?.modified } ?? thread.updated
-            guard now.timeIntervalSince(modified) <= activeWindow else { continue }
             retained.insert(thread.id)
             if let message = logs[thread.id]?.warning { warning = message }
             if let cached = sessionCache[thread.id], changes != nil, threadCache[thread.id] == thread,
                cached.lastActivityAt == modified,
                !(thread.rollout.map { sessionPathAffected($0, by: changes) } ?? false),
-               cached.phase != .compacting,
-               !(cached.phase.isWorking && now.timeIntervalSince(modified) >= 1200) {
+               cached.phase != .compacting {
                 sessions[thread.id] = cached
                 continue
             }
@@ -179,7 +176,7 @@ public actor CodexSessionProvider: SessionProviding {
         logs = logs.filter { retained.contains($0.key) }
         sessionCache = sessions
         threadCache = threads.reduce(into: [:]) { $0[$1.id] = $1 }
-        let result = Array(sessions.values.sorted(by: sessionOrder).prefix(50))
+        let result = sessions.values.sorted(by: sessionOrder)
         report.returnedSessions = result.count
         let duration = start.duration(to: .now).components
         report.elapsedMilliseconds = Double(duration.seconds) * 1000 + Double(duration.attoseconds) / 1e15

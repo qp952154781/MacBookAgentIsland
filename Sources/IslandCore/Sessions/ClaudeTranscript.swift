@@ -122,7 +122,7 @@ struct ClaudeTranscript: SessionLogState {
         return cleanSessionText(action, limit: 60)
     }
 
-    func session(id: String, process: ClaudeProcessEntry?, alive: Bool, desktopTitle: String?, modified: Date, now: Date) -> AgentSession {
+    func session(id: String, process: ClaudeProcessEntry?, alive: Bool?, desktopTitle: String?, modified: Date, now: Date) -> AgentSession {
         var phase: SessionPhase = .idle
         var activity: String? = lastCompletedAction
         if let retry { phase = .retrying; activity = retry }
@@ -131,7 +131,7 @@ struct ClaudeTranscript: SessionLogState {
         else if lastMessage == "assistant" {
             phase = ["end_turn", "stop_sequence"].contains(stopReason ?? "") ? .waitingInput : .thinking
         }
-        if !alive { phase = .ended }
+        if alive == false { phase = .ended }
         else if now.timeIntervalSince(modified) >= 1800 && !phase.isWorking { phase = .idle }
         let directory = nonempty(process?.cwd) ?? cwd
         let project = directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "未知项目"

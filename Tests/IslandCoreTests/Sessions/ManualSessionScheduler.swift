@@ -44,9 +44,9 @@ final class ManualSessionScheduler: SessionScheduler, @unchecked Sendable {
         for waiter in ready { waiter.continuation.resume() }
     }
 
-    func waitForSleep(until deadline: ContinuousClock.Instant) async {
+    func waitForSleep(until deadline: ContinuousClock.Instant, tolerance: Duration = .zero) async {
         for await value in sleeps.stream {
-            if value == deadline { return }
+            if value >= deadline && value <= deadline.advanced(by: tolerance) { return }
         }
     }
 }

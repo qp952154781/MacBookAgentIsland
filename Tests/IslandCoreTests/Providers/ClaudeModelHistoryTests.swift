@@ -15,6 +15,10 @@ private func modelLine(_ name: String) throws -> String {
     try claudeLine("assistant", message: ["model": name, "content": [], "stop_reason": "end_turn"])
 }
 
+private func shownModelSessions(_ provider: ClaudeSessionProvider, now: Date) async -> [AgentSession] {
+    SessionVisibilityPolicy.shownSessions(await provider.currentSessions(now: now), now: now, activeWindow: 1800)
+}
+
 private func modelState(_ model: String?, credentials: Bool? = false) throws -> ProviderState {
     try #require(ProviderAvailability.resolve(
         detection: .init(installed: [.claude: true], claudeCredentialsPresent: credentials),
@@ -32,7 +36,7 @@ private func modelState(_ model: String?, credentials: Bool? = false) throws -> 
         modelPreferences: ClaudeModelPreferences(defaults: defaults))
     #expect(await provider.currentSessions(now: sessionTestNow).count == 1)
     #expect(try modelState(await provider.latestObservedModel()).thirdPartyBackend)
-    #expect(await provider.currentSessions(now: sessionTestNow.addingTimeInterval(46 * 60)).isEmpty)
+    #expect(await shownModelSessions(provider, now: sessionTestNow.addingTimeInterval(46 * 60)).isEmpty)
     #expect(try modelState(await provider.latestObservedModel()).thirdPartyBackend)
     #expect(await provider.diagnostics.parsedBytes == 0)
     #expect(defaults.values as? [String: String] == [ClaudeModelPreferences.key: "glm-4.6"])
@@ -58,7 +62,7 @@ private func modelState(_ model: String?, credentials: Bool? = false) throws -> 
     try fixture.modified(sessionTestNow.addingTimeInterval(-46 * 60), newest)
     let provider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(pids: []),
         modelPreferences: ClaudeModelPreferences(defaults: defaults))
-    #expect(await provider.currentSessions(now: sessionTestNow).isEmpty)
+    #expect(await shownModelSessions(provider, now: sessionTestNow).isEmpty)
     #expect(await provider.latestObservedModel() == "kimi-fixture")
     #expect(await provider.diagnostics.parsedBytes == 1_048_576)
     #expect(defaults.values as? [String: String] == [ClaudeModelPreferences.key: "kimi-fixture"])
@@ -74,7 +78,7 @@ private func modelState(_ model: String?, credentials: Bool? = false) throws -> 
     try fixture.modified(sessionTestNow.addingTimeInterval(-46 * 60), file)
     let provider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(pids: []),
         modelPreferences: ClaudeModelPreferences(defaults: defaults))
-    #expect(await provider.currentSessions(now: sessionTestNow).isEmpty)
+    #expect(await shownModelSessions(provider, now: sessionTestNow).isEmpty)
     #expect(await provider.latestObservedModel() == "deepseek-fixture")
     #expect(await provider.diagnostics.parsedBytes == 0)
     #expect(defaults.writes == 0)
@@ -88,7 +92,7 @@ private func modelState(_ model: String?, credentials: Bool? = false) throws -> 
     let newest = try fixture.write(text, ".claude/projects/p/new.jsonl")
     try fixture.modified(sessionTestNow.addingTimeInterval(-46 * 60), newest)
     let provider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(pids: []))
-    #expect(await provider.currentSessions(now: sessionTestNow).isEmpty)
+    #expect(await shownModelSessions(provider, now: sessionTestNow).isEmpty)
     #expect(await provider.latestObservedModel() == nil)
     #expect(await provider.diagnostics.parsedBytes == text.utf8.count)
     _ = await provider.currentSessions(now: sessionTestNow)
@@ -101,7 +105,7 @@ private func modelState(_ model: String?, credentials: Bool? = false) throws -> 
     let file = try fixture.write(text, ".claude/projects/p/old.jsonl")
     try fixture.modified(sessionTestNow.addingTimeInterval(-Double(days) * 86400), file)
     let provider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(pids: []))
-    #expect(await provider.currentSessions(now: sessionTestNow).isEmpty)
+    #expect(await shownModelSessions(provider, now: sessionTestNow).isEmpty)
     #expect(await provider.latestObservedModel() == (days < 30 ? "glm-fixture" : nil))
     #expect(await provider.diagnostics.parsedBytes == (days < 30 ? text.utf8.count : 0))
 }

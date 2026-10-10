@@ -60,6 +60,12 @@ import IslandCore
             ("expanded-busy", .busy, .expanded, true),
             ("sessions-auto-4", .idle, .expanded, true),
             ("sessions-auto-5", .idle, .expanded, true),
+            // M20: review the column counts/automatic empty layout before and after expiry.
+            // These use the service's visibility policy with synthetic data; the controller
+            // generates and visually reviews them on a Mac with a hardware Metal renderer.
+            ("sessions-window-before-expiry", .idle, .expanded, true),
+            ("sessions-window-after-expiry", .idle, .expanded, true),
+            ("sessions-window-long-working", .idle, .expanded, true),
             ("sessions-grid-12", .idle, .expanded, true),
             ("sessions-grid-12-no-notch", .idle, .expanded, false),
             ("sessions-single-12", .idle, .expanded, true),
@@ -280,6 +286,14 @@ import IslandCore
             if name.hasPrefix("sessions-") {
                 let count = name == "sessions-auto-4" ? 4 : name == "sessions-auto-5" ? 5 : name == "sessions-double-2" ? 2 : 12
                 store.sessions = sessionGridFixtures(count: count)
+                if name.hasPrefix("sessions-window-") {
+                    store.sessions = SessionVisibilityPolicy.shownSessions(sessionWindowFixtures(),
+                        now: now.addingTimeInterval(name.hasSuffix("after-expiry") ? 120 : 0), activeWindow: 900)
+                    if name.hasSuffix("long-working") {
+                        store.sessions = SessionVisibilityPolicy.shownSessions(sessionWindowFixtures(includeWorking: true),
+                            now: now.addingTimeInterval(120), activeWindow: 900)
+                    }
+                }
                 if name == "sessions-single-12" { store.sessionListLayout = .singleColumn }
                 if name == "sessions-double-2" { store.sessionListLayout = .twoColumns }
                 if name.hasPrefix("sessions-grid-detail"), let first = store.displaySessions.first {
@@ -537,6 +551,27 @@ import IslandCore
     }
 
     /// Hand-written, synthetic sessions shared by layout snapshots and integration tests.
+    static func sessionWindowFixtures(includeWorking: Bool = false) -> [AgentSession] {
+        var sessions = ProviderRegistry.orderedIDs.flatMap { agent in
+            (0..<3).map { index in
+                AgentSession(agent: agent, sessionId: "window-\(index)", title: "等待输入的脱敏会话 \(index + 1)",
+                    phase: .waitingInput, lastActivityAt: now.addingTimeInterval(-14 * 60), isAlive: agent == .claude ? true : nil)
+            }
+        }
+        if includeWorking {
+            for agent in ProviderRegistry.orderedIDs {
+                // Codex has no liveness signal: keep synthetic long work within the stale cap.
+                let age: TimeInterval = agent == .claude ? 475 * 60 : 90 * 60
+                let alive: Bool? = agent == .claude ? true : nil
+                sessions.append(AgentSession(agent: agent, sessionId: "long-tool", title: "长时间工具调用",
+                    phase: .runningTool, activity: "执行脱敏工具", lastActivityAt: now.addingTimeInterval(-age), isAlive: alive))
+                sessions.append(AgentSession(agent: agent, sessionId: "permission", title: "需要用户允许",
+                    phase: .waitingPermission, lastActivityAt: now.addingTimeInterval(-age), isAlive: alive))
+            }
+        }
+        return sessions
+    }
+
     static func sessionGridFixtures(count: Int) -> [AgentSession] {
         let phases: [SessionPhase] = [.runningTool, .runningTool, .runningTool, .thinking, .compacting, .retrying,
                                      .waitingPermission, .waitingInput, .waitingInput, .error, .idle, .thinking]

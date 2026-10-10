@@ -41,7 +41,7 @@ import Testing
     #expect(state.toolCalls == 4)
 }
 
-@Test func codexAbortedStalledCompactionAndPlans() throws {
+@Test func codexAbortedLongRunningCompactionAndPlans() throws {
     var state = CodexRollout()
     feed(&state, "bad\n{}\n" + (try codexLine("event_msg", ["type": "task_started", "turn_id": "one"])))
     for status in ["in_progress", "inProgress"] {
@@ -61,9 +61,9 @@ import Testing
     feed(&state, try codexLine("event_msg", ["type": "item_completed", "item": ["type": "ContextCompaction"]]))
     #expect(state.session(thread: sampleThread(), modified: sessionTestNow, now: sessionTestNow).phase == .compacting)
     #expect(state.session(thread: sampleThread(), modified: sessionTestNow, now: sessionTestNow.addingTimeInterval(6)).phase == .thinking)
-    let stalled = state.session(thread: sampleThread(), modified: sessionTestNow, now: sessionTestNow.addingTimeInterval(1200))
-    #expect(stalled.phase == .idle)
-    #expect(stalled.activity == "无响应")
+    let longRunning = state.session(thread: sampleThread(), modified: sessionTestNow, now: sessionTestNow.addingTimeInterval(1200))
+    #expect(longRunning.phase == .thinking)
+    #expect(longRunning.activity == nil)
     feed(&state, try codexLine("event_msg", ["type": "turn_aborted", "turn_id": "one"]))
     #expect(state.session(thread: sampleThread(), modified: sessionTestNow, now: sessionTestNow).activity == "压缩上下文")
     feed(&state, try codexLine("event_msg", ["type": "task_started", "turn_id": "two"]))
@@ -135,7 +135,9 @@ import Testing
     try fixture.append(try codexLine("event_msg", ["type": "task_complete", "turn_id": "one"]), to: url)
     try fixture.modified(sessionTestNow, url)
     #expect(await provider.currentSessions().first?.phase == .waitingInput)
-    #expect(await provider.currentSessions(now: sessionTestNow.addingTimeInterval(1801)).isEmpty)
+    let later = await provider.currentSessions(now: sessionTestNow.addingTimeInterval(1801))
+    #expect(later.count == 1)
+    #expect(SessionVisibilityPolicy.shownSessions(later, now: sessionTestNow.addingTimeInterval(1801), activeWindow: 1800).isEmpty)
     try fixture.write("not sqlite", ".codex/state_99.sqlite")
     #expect(await provider.currentSessions().count == 1)
     #expect(await provider.diagnostics.sqliteReadable == false)
@@ -206,11 +208,11 @@ import Testing
     let original = try Data(contentsOf: databaseURL)
     let provider = CodexSessionProvider(paths: fixture.paths, clock: { sessionTestNow })
     let sessions = await provider.currentSessions()
-    #expect(sessions.count == 1)
+    #expect(sessions.count == 2)
     #expect(sessions.first?.title == "数据库标题")
     #expect(sessions.first?.projectName == "database-project")
     #expect(await provider.diagnostics.sqliteReadable)
-    #expect(await provider.diagnostics.sqliteThreads == 1)
+    #expect(await provider.diagnostics.sqliteThreads == 2)
     #expect(try Data(contentsOf: databaseURL) == original)
     #expect(sqlite3_exec(database, "UPDATE threads SET name = '更新后的名称' WHERE archived = 0", nil, nil, nil) == SQLITE_OK)
     #expect(await provider.currentSessions().first?.title == "更新后的名称")
@@ -232,7 +234,7 @@ import Testing
     #expect(sessions.first?.sessionId == "12345678-1234-1234-1234-000000000000")
     #expect(sessions.first?.activity == "执行 swift test")
     #expect(sessions.allSatisfy { $0.phase == .runningTool })
-    #expect(await provider.currentSessions(now: sessionTestNow.addingTimeInterval(1201)).allSatisfy { $0.activity == "无响应" })
+    #expect(await provider.currentSessions(now: sessionTestNow.addingTimeInterval(1201)).allSatisfy { $0.phase == .runningTool && $0.activity == "执行 swift test" })
 }
 
 @Test func codexHeadingsStopAtEarliestBoundaryAndTokenRevision() throws {
@@ -261,7 +263,7 @@ import Testing
     #expect(!codex.contains("metadataEntries"))
 }
 
-@Test func providersHotUpdateActiveWindow() async throws {
+@Test func serviceHotUpdatesSharedActiveWindow() async throws {
     let fixture = try SessionFixture(); defer { fixture.remove() }
     let claudeFile = try fixture.write("{}\n", ".claude/projects/p/old.jsonl")
     let codexFile = try fixture.write("{}\n", fixture.rolloutPath(id: "12345678-1234-1234-1234-123456789012", date: sessionTestNow))
@@ -269,10 +271,14 @@ import Testing
     try fixture.modified(sessionTestNow.addingTimeInterval(-2400), codexFile)
     let providers: [any SessionProviding] = [ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(pids: [])), CodexSessionProvider(paths: fixture.paths)]
     for provider in providers {
-        #expect(await provider.currentSessions(now: sessionTestNow).isEmpty)
-        await provider.setActiveWindow(3600)
+        let service = SessionService(providers: [provider], clock: { sessionTestNow })
         #expect(await provider.currentSessions(now: sessionTestNow).count == 1)
-        await provider.setActiveWindow(900)
-        #expect(await provider.currentSessions(now: sessionTestNow).isEmpty)
+        await service.refreshNow()
+        #expect(await service.latestUpdate()?.sessions.isEmpty == true)
+        await service.setActiveWindow(3600)
+        #expect(await service.latestUpdate()?.sessions.count == 1)
+        await service.setActiveWindow(900)
+        #expect(await service.latestUpdate()?.sessions.isEmpty == true)
+        await service.stop()
     }
 }

@@ -127,6 +127,7 @@ public actor ClaudeSessionProvider: SessionProviding {
         // Normalize each unique input once after watcher/service coalescing, never per comparison.
         let changes = loaded ? changedPaths.map { Set($0.map(physicalPath)) } : nil
         var alive: Set<String> = []
+        var unknown: Set<String> = []
         let processRoot = paths.claude.appendingPathComponent("sessions")
         let processChanged = changes == nil || changes?.contains(where: {
             sessionPathAffected(processRoot, by: [$0]) || $0.hasPrefix(processRoot.path + "/")
@@ -141,12 +142,16 @@ public actor ClaudeSessionProvider: SessionProviding {
                       entry.pid > 0, !entry.sessionId.isEmpty else { continue }
                 if ClaudeRefreshDirectory.contains(entry.cwd, directory: refreshDirectory) { excludedIDs.insert(entry.sessionId); continue }
                 let live = liveness.isClaudeAlive(pid: entry.pid)
-                if processes[entry.sessionId] == nil || live { processes[entry.sessionId] = entry }
+                if processes[entry.sessionId] == nil || live == true { processes[entry.sessionId] = entry }
             }
         }
         report.processEntries = processEntryCount
-        for entry in processes.values where liveness.isClaudeAlive(pid: entry.pid) {
-            alive.insert(entry.sessionId); report.liveProcesses += 1
+        for entry in processes.values {
+            switch liveness.isClaudeAlive(pid: entry.pid) {
+            case true?: alive.insert(entry.sessionId); report.liveProcesses += 1
+            case nil: unknown.insert(entry.sessionId)
+            case false?: break
+            }
         }
         let metadataChanged = changes == nil || changes?.contains(where: {
             sessionPathAffected(paths.claudeDesktopMetadata, by: [$0]) || $0.hasPrefix(paths.claudeDesktopMetadata.path + "/")
@@ -178,23 +183,19 @@ public actor ClaudeSessionProvider: SessionProviding {
         fileStamps = fileStamps.filter { discovered[$0.key] != nil }
         loaded = true
         report.transcripts = discovered.count
-        let eligible = Set(discovered.keys).union(alive).filter { id in
-            !excludedIDs.contains(id) && metadata[id]?.archived != true && (alive.contains(id) || now.timeIntervalSince(fileStamps[id]?.modified ?? .distantPast) <= activeWindow)
+        // Return all discovered sessions. Phase-aware expiry and the display limit belong
+        // to SessionService; a recent idle transcript must not crowd out an older live turn.
+        let candidates = Set(discovered.keys).union(alive).union(unknown).filter { id in
+            !excludedIDs.contains(id) && metadata[id]?.archived != true
         }
-        let candidates = Set(eligible.sorted { left, right in
-            let lhs = fileStamps[left]?.modified ?? .distantPast
-            let rhs = fileStamps[right]?.modified ?? .distantPast
-            if alive.contains(left) != alive.contains(right) { return alive.contains(left) }
-            return lhs == rhs ? left < right : lhs > rhs
-        }.prefix(50))
-        if eligible.count > 50 { warning = "Claude 仅显示最近 50 个会话" }
         var sessions: [AgentSession] = []
         var observed: (model: String, modified: Date)?
         for id in candidates.sorted() {
             if Task.isCancelled { break }
             if let message = logs[id]?.warning { warning = message }
+            let processAlive: Bool? = unknown.contains(id) ? nil : alive.contains(id)
             if let cached = sessionCache[id], !discover, !processChanged, !metadataChanged,
-               cached.isAlive == alive.contains(id),
+               cached.isAlive == processAlive,
                !(discovered[id].map({ sessionPathAffected($0, by: changes) }) ?? false),
                !(cached.phase != .idle && !cached.phase.isWorking && now.timeIntervalSince(cached.lastActivityAt) >= 1800) {
                 sessions.append(cached)
@@ -203,7 +204,9 @@ public actor ClaudeSessionProvider: SessionProviding {
             var state = ClaudeTranscript()
             let process = processes[id]
             let modified = fileStamps[id]?.modified ?? process?.startedAt.flatMap(DateParsing.unixMilliseconds) ?? .distantPast
-            if let file = discovered[id] {
+            // A dead process always yields .ended, so old uncached transcripts need no
+            // parsing to determine visibility. Unknown/live processes need their actual phase.
+            if let file = discovered[id], processAlive != false || logs[id] != nil || now.timeIntervalSince(modified) <= activeWindow {
                 var log = logs[id] ?? SessionLog(url: file)
                 if log.tailer.url != file { log = SessionLog(url: file) }
                 log.state.modelWasObserved = false
@@ -215,11 +218,11 @@ public actor ClaudeSessionProvider: SessionProviding {
                 logs[id] = log
             }
             if ClaudeRefreshDirectory.contains(state.cwd, directory: refreshDirectory) { continue }
-            if state.modelWasObserved, let model = state.model,
+            if (alive.contains(id) || now.timeIntervalSince(modified) <= activeWindow), state.modelWasObserved, let model = state.model,
                observed == nil || modified > (observed?.modified ?? .distantPast) {
                 observed = (model, modified)
             }
-            sessions.append(state.session(id: id, process: process, alive: alive.contains(id), desktopTitle: metadata[id]?.title, modified: modified, now: now))
+            sessions.append(state.session(id: id, process: process, alive: processAlive, desktopTitle: metadata[id]?.title, modified: modified, now: now))
         }
         await observeModel(observed?.model)
         if lastObservedModel == nil, !modelBootstrapAttempted, !Task.isCancelled {
@@ -243,7 +246,7 @@ public actor ClaudeSessionProvider: SessionProviding {
         }
         logs = logs.filter { candidates.contains($0.key) }
         sessionCache = Dictionary(uniqueKeysWithValues: sessions.map { ($0.sessionId, $0) })
-        sessions = Array(sessions.sorted(by: sessionOrder).prefix(50))
+        sessions.sort(by: sessionOrder)
         report.returnedSessions = sessions.count
         let duration = start.duration(to: .now).components
         report.elapsedMilliseconds = Double(duration.seconds) * 1000 + Double(duration.attoseconds) / 1e15

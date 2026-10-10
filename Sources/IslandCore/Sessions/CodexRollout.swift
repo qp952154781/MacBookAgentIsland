@@ -156,8 +156,8 @@ struct CodexRollout: SessionLogState {
                 ? (toolCalls == 0 ? "本轮无工具调用" : "本轮工具调用已完成")
                 : "本轮工具记录不完整")
         }
-        if active && now.timeIntervalSince(modified) >= 1200 { phase = .idle; action = "无响应" }
-        else if phase == .compacting && now.timeIntervalSince(compactionAt ?? modified) >= 5 { phase = .thinking; action = nil }
+        // Silence does not end a turn: long tools remain working until a closing event.
+        if phase == .compacting && now.timeIntervalSince(compactionAt ?? modified) >= 5 { phase = .thinking; action = nil }
         let directory = cwd ?? nonempty(thread.cwd)
         let project = directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "未知项目"
         let title: String

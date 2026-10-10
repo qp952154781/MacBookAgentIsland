@@ -20,8 +20,8 @@ public protocol InitialQuotaProviding: QuotaProviding {
 }
 public protocol SessionProviding: Sendable {
     var agent: ProviderID { get }
-    /// Returns cached, incrementally read sessions that are alive or recently active.
     func diagnosticMessage() async -> String?
+    /// All discovered, unarchived sessions; the service applies visibility after parsing.
     func currentSessions(now: Date) async -> [AgentSession]
     /// nil requests discovery/reconciliation; paths request a selective refresh.
     func currentSessions(now: Date, changedPaths: Set<String>?) async -> [AgentSession]
@@ -30,6 +30,7 @@ public protocol SessionProviding: Sendable {
     func latestObservedModel() async -> String?
     /// Debounced paths, scoped to this provider. An empty set requests reconciliation.
     func changes() -> AsyncStream<Set<String>>
+    /// Optional parsing budget for already-ended records; never a visibility filter.
     func setActiveWindow(_ seconds: TimeInterval) async
 }
 

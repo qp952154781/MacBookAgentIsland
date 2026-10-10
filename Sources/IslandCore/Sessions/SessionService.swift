@@ -48,6 +48,10 @@ public actor SessionService: SessionServicing {
     private var refreshTask: Task<Void, Never>?
     private var delayTask: Task<Void, Never>?
     private var delayDeadline: ContinuousClock.Instant?
+    private var activeWindow: TimeInterval = 1800
+    private var expirationTask: Task<Void, Never>?
+    private var expirationGeneration = 0
+    private(set) var nextExpirationAt: Date?
     private var pending: [ProviderID: Pending] = [:]
     private var lastScans: [ProviderID: ContinuousClock.Instant] = [:]
     private var hiddenSince: ContinuousClock.Instant?
@@ -74,7 +78,7 @@ public actor SessionService: SessionServicing {
     }
     deinit {
         for task in tasks { task.cancel() }
-        refreshTask?.cancel(); delayTask?.cancel()
+        refreshTask?.cancel(); delayTask?.cancel(); expirationTask?.cancel()
         for continuation in continuations.values { continuation.finish() }
     }
     public func latestUpdate() async -> SessionUpdate? { currentUpdate() }
@@ -89,6 +93,7 @@ public actor SessionService: SessionServicing {
         guard enabledIDs != ids else { return }
         let wasRunning = requestedRunning
         running = false; generation += 1
+        cancelExpiration()
         let token = generation
         enabledIDs = ids
         let previous = tasks, refresh = refreshTask
@@ -97,14 +102,16 @@ public actor SessionService: SessionServicing {
         refreshTask = nil; delayTask = nil; delayDeadline = nil
         pending.removeAll(); lastScans.removeAll()
         cached = cached.filter { ids.contains($0.key) }; warnings = warnings.filter { ids.contains($0.key) }
-        sessions = cached.values.flatMap { $0 }.sorted(by: sessionOrder)
+        if hasLoaded { publishProjection(now: clock()) }
         for task in previous { await task.value }; await refresh?.value
         guard token == generation else { return }
         if wasRunning && requestedRunning { await start() }
     }
 
     public func setActiveWindow(_ seconds: TimeInterval) async {
+        activeWindow = seconds
         for provider in allProviders { await provider.setActiveWindow(seconds) }
+        if hasLoaded { publishProjection(now: clock()) }
         if running { await refreshNow() }
     }
 
@@ -172,6 +179,8 @@ public actor SessionService: SessionServicing {
     public func stop() async {
         running = false; requestedRunning = false
         generation += 1
+        let stoppedExpiration = expirationTask
+        cancelExpiration()
         let stoppedTasks = tasks, stoppedRefresh = refreshTask
         tasks.forEach { $0.cancel() }; tasks.removeAll()
         refreshTask?.cancel(); delayTask?.cancel()
@@ -181,6 +190,7 @@ public actor SessionService: SessionServicing {
         continuations.removeAll()
         for task in stoppedTasks { await task.value }
         await stoppedRefresh?.value
+        await stoppedExpiration?.value
     }
 
     /// Explicit reconciliation also respects provider limits. Wake is the sole immediate override.
@@ -265,10 +275,16 @@ public actor SessionService: SessionServicing {
                     }
                 }
             }
-            let combined = cached.values.flatMap { $0 }.sorted(by: sessionOrder)
-            // Timing/byte counters never participate in observable equality. One-shot event flags
-            // are computed only after the persistent sessions/warnings actually change.
-            guard !hasLoaded || combined != sessions || previousWarnings != warnings || previousModel != latestModel else { continue }
+            // IO may finish after the wall-clock expiry deadline.
+            publishProjection(now: clock(), force: previousWarnings != warnings || previousModel != latestModel)
+        }
+    }
+
+    private func publishProjection(now: Date, force: Bool = false) {
+        let combined = SessionVisibilityPolicy.shownSessions(cached.values.flatMap { $0 }, now: now, activeWindow: activeWindow)
+        // Timing/byte counters never participate in observable equality. Expiry only removes
+        // rows; it must not create completion events or token-count refresh signals.
+        if !hasLoaded || combined != sessions || force {
             let events = deduper.filter(detectSessionEvents(old: sessions, new: combined, now: now), now: now)
             let changed = hasLoaded && combined.contains { next in
                 next.agent == .codex && next.tokenCountRevision != nil &&
@@ -277,10 +293,44 @@ public actor SessionService: SessionServicing {
             hasLoaded = true
             sessions = combined
             var update = SessionUpdate(sessions: sessions, events: events, codexTokenCountChanged: changed)
-            update.latestClaudeModel = latestModel
-            update.warnings = warnings
+            update.latestClaudeModel = latestModel; update.warnings = warnings
             metrics.updatesPublished += 1
             for continuation in continuations.values { continuation.yield(update) }
         }
+        scheduleExpiration(now: now)
+    }
+
+    private func cancelExpiration() {
+        expirationGeneration += 1
+        expirationTask?.cancel(); expirationTask = nil; nextExpirationAt = nil
+    }
+
+    private func scheduleExpiration(now: Date) {
+        // Visibility is inclusive at exactly the window boundary; wake just beyond it.
+        let next = running ? sessions.compactMap {
+            SessionVisibilityPolicy.expiration(of: $0, activeWindow: activeWindow)?.addingTimeInterval(0.001)
+        }.min() : nil
+        guard next != nextExpirationAt else { return }
+        cancelExpiration()
+        guard let next else { return }
+        let delay = ceil(max(0.001, next.timeIntervalSince(now)) * 1000)
+        // Malformed far-future timestamps cannot become an overflowing integer duration.
+        guard delay.isFinite, delay < Double(Int64.max) else { return }
+        nextExpirationAt = next
+        let token = expirationGeneration
+        let delayMilliseconds = Int64(delay)
+        let deadline = scheduler.now().advanced(by: .milliseconds(delayMilliseconds))
+        expirationTask = Task { [weak self, scheduler] in
+            do { try await scheduler.sleep(until: deadline) } catch { return }
+            guard !Task.isCancelled else { return }
+            await self?.expire(generation: token)
+        }
+    }
+
+    private func expire(generation token: Int) {
+        guard running, token == expirationGeneration else { return }
+        expirationTask = nil; nextExpirationAt = nil
+        // Use the parsed cache, without enumerating files or waking provider IO.
+        publishProjection(now: clock())
     }
 }

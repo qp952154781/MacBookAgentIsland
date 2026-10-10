@@ -108,17 +108,18 @@ import Testing
     let metadata = try fixture.write("{\"cliSessionId\":\"live\",\"title\":\"桌面标题\",\"isArchived\":false}", "Library/Application Support/Claude/claude-code-sessions/a/b/local_live.json")
     let provider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(), clock: { sessionTestNow })
     let first = await provider.currentSessions()
-    #expect(first.map(\.sessionId) == ["live", "recent"])
+    #expect(first.map(\.sessionId) == ["live", "recent", "old"])
+    #expect(SessionVisibilityPolicy.shownSessions(first, now: sessionTestNow, activeWindow: 1800).map(\.sessionId) == ["live", "recent"])
     #expect(first.first?.title == "桌面标题")
     #expect(first.first?.origin == "claude-desktop")
     #expect(first.last?.phase == .ended)
     #expect(await provider.diagnostics.processEntries == 2)
     #expect(await provider.diagnostics.liveProcesses == 1)
-    #expect(await provider.currentSessions(now: sessionTestNow).count == 2)
+    #expect(await provider.currentSessions(now: sessionTestNow).count == 3)
     #expect(await provider.diagnostics.parsedBytes == 0)
     try Data("{\"cliSessionId\":\"live\",\"isArchived\":true}".utf8).write(to: metadata)
     try fixture.modified(sessionTestNow.addingTimeInterval(2), metadata)
-    #expect(await provider.currentSessions(now: sessionTestNow).map(\.sessionId) == ["recent"])
+    #expect(await provider.currentSessions(now: sessionTestNow).map(\.sessionId) == ["recent", "old"])
 }
 
 @Test func claudeTailPerformanceIncrementalAndRotation() async throws {
@@ -170,7 +171,33 @@ import Testing
     try fixture.write("{\"pid\":123,\"sessionId\":\"id-9\",\"cwd\":\"/fixture/project\"}", ".claude/sessions/123.json")
     let liveProvider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness())
     let later = await liveProvider.currentSessions(now: sessionTestNow.addingTimeInterval(2000))
-    #expect(later.map(\.sessionId) == ["id-9"])
+    let shown = SessionVisibilityPolicy.shownSessions(later, now: sessionTestNow.addingTimeInterval(2000), activeWindow: 1800)
+    #expect(later.count == 10)
+    #expect(shown.map(\.sessionId) == ["id-9"])
     // Working live sessions do not become idle merely because their transcript stopped changing.
-    #expect(later.first?.phase == .thinking)
+    #expect(shown.first?.phase == .thinking)
+}
+
+@Test func claudeUnknownProcessIdentityPreservesToolPhaseAndUsesStaleWorkingCap() async throws {
+    let fixture = try SessionFixture(); defer { fixture.remove() }
+    for (id, minutes) in [("recent", 90.0), ("stale", 180.0)] {
+        try fixture.write("{\"pid\":123,\"sessionId\":\"\(id)\",\"entrypoint\":\"claude-desktop\"}", ".claude/sessions/\(id).json")
+        let old = sessionTestNow.addingTimeInterval(-minutes * 60)
+        let tool: SessionJSON = ["type": "tool_use", "id": "fixture-tool", "name": "Bash", "input": ["command": "fixture-tool"]]
+        let text = try claudeLine("assistant", message: ["content": [tool], "stop_reason": "tool_use"],
+                                  extra: ["timestamp": old.ISO8601Format()])
+        let file = try fixture.write(text, ".claude/projects/p/\(id).jsonl")
+        try fixture.modified(old, file)
+    }
+    let provider = ClaudeSessionProvider(paths: fixture.paths, liveness: FixtureLiveness(unknownPids: [123]))
+    await provider.setActiveWindow(900)
+    let raw = await provider.currentSessions(now: sessionTestNow)
+    #expect(raw.count == 2 && raw.allSatisfy { $0.isAlive == nil && $0.phase == .runningTool })
+    #expect(await provider.diagnostics.liveProcesses == 0)
+    let decisions = SessionVisibilityPolicy.decisions(for: raw, now: sessionTestNow, activeWindow: 900)
+    #expect(decisions["claude:recent"] == SessionVisibility(shown: true, reason: .working))
+    #expect(decisions["claude:stale"] == SessionVisibility(shown: false, reason: .staleWorking))
+    let cached = await provider.currentSessions(now: sessionTestNow, changedPaths: [])
+    #expect(cached == raw)
+    #expect(await provider.diagnostics.parsedBytes == 0)
 }

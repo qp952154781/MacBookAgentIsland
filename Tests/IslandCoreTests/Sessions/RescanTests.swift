@@ -34,7 +34,7 @@ private actor RescanProvider: SessionProviding {
 @Test func providerIsolationAndUnchangedUpdatesIncludeStableWarnings() async {
     let scheduler = ManualSessionScheduler()
     let claude = RescanProvider(.claude, scheduler: scheduler), codex = RescanProvider(.codex, scheduler: scheduler)
-    let service = SessionService(providers: [claude, codex], scheduler: scheduler)
+    let service = SessionService(providers: [claude, codex], clock: { sessionTestNow }, scheduler: scheduler)
     await claude.setWarning("固定诊断")
     var iterator = await service.updates().makeAsyncIterator()
     await service.start()
@@ -59,7 +59,7 @@ private actor RescanProvider: SessionProviding {
 @Test func sustainedSignalsRespectPerProviderSpacingAndRetainEveryPath() async {
     let scheduler = ManualSessionScheduler()
     let claude = RescanProvider(.claude, scheduler: scheduler), codex = RescanProvider(.codex, scheduler: scheduler)
-    let service = SessionService(providers: [claude, codex], scheduler: scheduler)
+    let service = SessionService(providers: [claude, codex], clock: { sessionTestNow }, scheduler: scheduler)
     await service.start()
     var expected: Set<String> = []
     for batch in 0..<3 {
@@ -92,7 +92,7 @@ private actor RescanProvider: SessionProviding {
 @Test func pathsArrivingDuringScanAreProcessedOnNextScan() async {
     let scheduler = ManualSessionScheduler()
     let provider = RescanProvider(.claude, scheduler: scheduler)
-    let service = SessionService(providers: [provider], scheduler: scheduler)
+    let service = SessionService(providers: [provider], clock: { sessionTestNow }, scheduler: scheduler)
     await service.start()
     await provider.setPaused(true)
     await service.changed(agent: .claude, paths: ["/fixture/first.jsonl"])
@@ -117,7 +117,7 @@ private actor RescanProvider: SessionProviding {
 @Test func hiddenScansWaitThirtySecondsAndWakeRefreshesImmediately() async {
     let scheduler = ManualSessionScheduler()
     let provider = RescanProvider(.claude, scheduler: scheduler)
-    let service = SessionService(providers: [provider], scheduler: scheduler)
+    let service = SessionService(providers: [provider], clock: { sessionTestNow }, scheduler: scheduler)
     var iterator = await service.updates().makeAsyncIterator()
     await service.start()
     _ = await iterator.next()
@@ -146,7 +146,7 @@ private actor RescanProvider: SessionProviding {
 @Test func initiallyHiddenServiceCanWakeWithoutWaitingForInitialScan() async {
     let scheduler = ManualSessionScheduler()
     let provider = RescanProvider(.claude, scheduler: scheduler)
-    let service = SessionService(providers: [provider], scheduler: scheduler)
+    let service = SessionService(providers: [provider], clock: { sessionTestNow }, scheduler: scheduler)
     await service.setVisible(false)
     let starting = Task { await service.start() }
     await scheduler.waitForSleep(until: scheduler.now().advanced(by: .seconds(30)))
